@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mindfull/services/platform_channel.dart';
+import 'package:mindfull/services/notes_repository.dart';
 import 'package:mindfull/screens/app_selection_screen.dart';
 import 'package:mindfull/screens/onboarding_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -15,8 +17,13 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   bool _serviceRunning = false;
   bool _usageGranted = false;
   bool _overlayGranted = false;
+  bool _batteryExempt = false;
   int _monitoredCount = 0;
+  int _cooldownMinutes = 5;
   bool _loading = true;
+
+  static const _cooldownOptions = [1, 5, 15, 30, 60];
+  static const _privacyPolicyUrl = 'https://example.com/privacy'; // TODO: заменить на реальный URL
 
   @override
   void initState() {
@@ -41,12 +48,15 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     final perms = await PlatformChannel.checkAllPermissions();
     final prefs = await SharedPreferences.getInstance();
     final monitored = prefs.getStringList('monitored_packages') ?? [];
+    final cooldown = prefs.getInt('cooldown_minutes') ?? 5;
     if (!mounted) return;
     setState(() {
       _serviceRunning = running;
       _usageGranted = perms.usageAccess;
       _overlayGranted = perms.overlay;
+      _batteryExempt = perms.battery;
       _monitoredCount = monitored.length;
+      _cooldownMinutes = cooldown;
       _loading = false;
     });
   }
@@ -68,6 +78,72 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Ошибка: $e')),
       );
+    }
+  }
+
+  Future<void> _setCooldown(int minutes) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('cooldown_minutes', minutes);
+    setState(() => _cooldownMinutes = minutes);
+  }
+
+  Future<void> _deleteAllData() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удалить все данные?'),
+        content: const Text(
+          'Будут удалены:\n'
+          '• Все заметки\n'
+          '• Список контролируемых приложений\n'
+          '• Все настройки\n\n'
+          'Это действие нельзя отменить.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Удалить всё'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      // Останавливаем сервис
+      await PlatformChannel.stopMonitorService();
+
+      // Очищаем заметки
+      await NotesRepository.clearAll();
+
+      // Очищаем SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('monitored_packages');
+      await prefs.remove('cooldown_minutes');
+      await prefs.setBool('service_enabled', false);
+      // Не сбрасываем onboarding_done чтобы не показывать онбординг заново
+
+      // Обновляем мониторинг (пустой список)
+      await PlatformChannel.updateMonitoredApps([]);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Все данные удалены')),
+      );
+      _refresh();
+    }
+  }
+
+  Future<void> _openPrivacyPolicy() async {
+    final uri = Uri.parse(_privacyPolicyUrl);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
   }
 
@@ -101,7 +177,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                       : null,
                 ),
 
-                if (!_usageGranted || !_overlayGranted) ...[
+                if (!_usageGranted || !_overlayGranted)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Card(
@@ -123,7 +199,6 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                       ),
                     ),
                   ),
-                ],
 
                 const Divider(height: 32),
 
@@ -140,6 +215,18 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                     );
                     _refresh();
                   },
+                ),
+
+                const Divider(height: 32),
+
+                // ── Пауза ──
+                _section(cs, 'Пауза'),
+                ListTile(
+                  leading: Icon(Icons.timer_rounded, color: cs.primary),
+                  title: const Text('Cooldown между паузами'),
+                  subtitle: Text(_cooldownLabel(_cooldownMinutes)),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => _showCooldownPicker(cs),
                 ),
 
                 const Divider(height: 32),
@@ -162,6 +249,14 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                     await PlatformChannel.requestOverlayPermission();
                   },
                 ),
+                _permissionTile(
+                  cs,
+                  title: 'Оптимизация батареи отключена',
+                  granted: _batteryExempt,
+                  onTap: () async {
+                    await PlatformChannel.requestBatteryOptimizationExemption();
+                  },
+                ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: TextButton.icon(
@@ -169,6 +264,17 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                     icon: const Icon(Icons.refresh_rounded, size: 18),
                     label: const Text('Обновить статус разрешений'),
                   ),
+                ),
+
+                const Divider(height: 32),
+
+                // ── Данные ──
+                _section(cs, 'Данные'),
+                ListTile(
+                  leading: Icon(Icons.delete_forever_rounded, color: cs.error),
+                  title: const Text('Удалить все данные'),
+                  subtitle: const Text('Заметки, настройки, список приложений'),
+                  onTap: _deleteAllData,
                 ),
 
                 const Divider(height: 32),
@@ -181,6 +287,12 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
                   subtitle: const Text('Версия 1.0.0'),
                 ),
                 ListTile(
+                  leading: Icon(Icons.privacy_tip_outlined, color: cs.onSurfaceVariant),
+                  title: const Text('Политика конфиденциальности'),
+                  trailing: const Icon(Icons.open_in_new_rounded, size: 18),
+                  onTap: _openPrivacyPolicy,
+                ),
+                ListTile(
                   leading: Icon(Icons.replay_rounded, color: cs.onSurfaceVariant),
                   title: const Text('Показать онбординг'),
                   subtitle: const Text('Запустить приветственный экран заново'),
@@ -191,6 +303,46 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
               ],
             ),
     );
+  }
+
+  void _showCooldownPicker(ColorScheme cs) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'Повторная пауза не сработает в течение выбранного времени '
+                'после последней паузы для того же приложения.',
+                style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
+              ),
+            ),
+            ..._cooldownOptions.map((minutes) => RadioListTile<int>(
+              title: Text(_cooldownLabel(minutes)),
+              value: minutes,
+              groupValue: _cooldownMinutes,
+              onChanged: (v) {
+                if (v != null) {
+                  _setCooldown(v);
+                  Navigator.of(ctx).pop();
+                }
+              },
+            )),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _cooldownLabel(int minutes) {
+    if (minutes == 1) return '1 минута';
+    if (minutes < 5) return '$minutes минуты';
+    if (minutes == 60) return '1 час';
+    return '$minutes минут';
   }
 
   Widget _section(ColorScheme cs, String title) {
@@ -253,7 +405,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       await prefs.setBool('onboarding_done', false);
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => OnboardingScreen()),
+        MaterialPageRoute(builder: (_) => const OnboardingScreen()),
         (_) => false,
       );
     }

@@ -14,9 +14,11 @@ class OnboardingScreen extends StatefulWidget {
 class _OnboardingScreenState extends State<OnboardingScreen> {
   final _controller = PageController();
   int _page = 0;
+  static const _totalPages = 4;
 
   bool _usageGranted = false;
   bool _overlayGranted = false;
+  bool _batteryExempt = false;
 
   @override
   void dispose() {
@@ -30,6 +32,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     setState(() {
       _usageGranted = perms.usageAccess;
       _overlayGranted = perms.overlay;
+      _batteryExempt = perms.battery;
     });
   }
 
@@ -37,7 +40,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('onboarding_done', true);
     if (!mounted) return;
-    // После онбординга → выбор приложений → домой
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const HomeScreen()),
     );
@@ -47,7 +49,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   void _nextPage() {
-    if (_page < 2) {
+    if (_page < _totalPages - 1) {
       _controller.nextPage(
         duration: const Duration(milliseconds: 350),
         curve: Curves.easeInOut,
@@ -68,7 +70,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               padding: const EdgeInsets.symmetric(vertical: 16),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(3, (i) {
+                children: List.generate(_totalPages, (i) {
                   final active = i == _page;
                   return AnimatedContainer(
                     duration: const Duration(milliseconds: 250),
@@ -90,13 +92,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 controller: _controller,
                 onPageChanged: (i) {
                   setState(() => _page = i);
-                  if (i == 2) _refreshPermissions();
+                  if (i >= 2) _refreshPermissions();
                 },
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
                   _buildWelcomePage(cs),
                   _buildHowItWorksPage(cs),
                   _buildPermissionsPage(cs),
+                  _buildBatteryPage(cs),
                 ],
               ),
             ),
@@ -149,13 +152,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          _step(cs, Icons.touch_app_rounded, '1', 'Выберите приложения',
+          _step(cs, Icons.touch_app_rounded, 'Выберите приложения',
               'Укажите, перед какими приложениями показывать паузу'),
           const SizedBox(height: 24),
-          _step(cs, Icons.timer_rounded, '2', '60 секунд паузы',
+          _step(cs, Icons.timer_rounded, '60 секунд паузы',
               'Дыхательная анимация и время подумать'),
           const SizedBox(height: 24),
-          _step(cs, Icons.arrow_forward_rounded, '3', 'Продолжайте',
+          _step(cs, Icons.arrow_forward_rounded, 'Продолжайте',
               'После паузы — свободный переход в приложение'),
           const SizedBox(height: 48),
           FilledButton(
@@ -167,7 +170,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  Widget _step(ColorScheme cs, IconData icon, String num, String title, String desc) {
+  Widget _step(ColorScheme cs, IconData icon, String title, String desc) {
     return Row(
       children: [
         CircleAvatar(
@@ -194,10 +197,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  // ── Страница 3: Разрешения ──
+  // ── Страница 3: Основные разрешения ──
 
   Widget _buildPermissionsPage(ColorScheme cs) {
-    final allGranted = _usageGranted && _overlayGranted;
+    final coreGranted = _usageGranted && _overlayGranted;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -220,7 +223,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
           const SizedBox(height: 40),
 
-          // Usage Access
           _permissionTile(
             cs,
             icon: Icons.bar_chart_rounded,
@@ -229,14 +231,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             granted: _usageGranted,
             onTap: () async {
               await PlatformChannel.requestUsageAccess();
-              // Пользователь вернётся из настроек — обновим статус
               await Future.delayed(const Duration(seconds: 1));
               _refreshPermissions();
             },
           ),
           const SizedBox(height: 16),
 
-          // Overlay
           _permissionTile(
             cs,
             icon: Icons.layers_rounded,
@@ -251,7 +251,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Кнопка обновить
           TextButton.icon(
             onPressed: _refreshPermissions,
             icon: const Icon(Icons.refresh_rounded, size: 18),
@@ -261,10 +260,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const SizedBox(height: 40),
 
           FilledButton(
-            onPressed: allGranted ? _finishOnboarding : null,
-            child: const Text('Начать'),
+            onPressed: coreGranted ? _nextPage : null,
+            child: const Text('Далее'),
           ),
-          if (!allGranted) ...[
+          if (!coreGranted) ...[
             const SizedBox(height: 8),
             Text(
               'Выдайте оба разрешения, чтобы продолжить',
@@ -275,6 +274,99 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       ),
     );
   }
+
+  // ── Страница 4: Батарея + завершение ──
+
+  Widget _buildBatteryPage(ColorScheme cs) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 32),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            _batteryExempt ? Icons.battery_full_rounded : Icons.battery_alert_rounded,
+            size: 64,
+            color: _batteryExempt ? cs.primary : cs.onSurfaceVariant,
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'Оптимизация батареи',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: cs.onSurface,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Чтобы защита работала стабильно, отключите оптимизацию батареи '
+            'для Mindful Pause. Без этого система может остановить фоновый сервис.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant),
+          ),
+          const SizedBox(height: 32),
+
+          if (!_batteryExempt) ...[
+            _permissionTile(
+              cs,
+              icon: Icons.battery_saver_rounded,
+              title: 'Отключить оптимизацию батареи',
+              subtitle: 'Нажмите и выберите «Разрешить»',
+              granted: false,
+              onTap: () async {
+                await PlatformChannel.requestBatteryOptimizationExemption();
+                await Future.delayed(const Duration(seconds: 2));
+                _refreshPermissions();
+              },
+            ),
+            const SizedBox(height: 16),
+            TextButton.icon(
+              onPressed: _refreshPermissions,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Проверить'),
+            ),
+          ] else ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: cs.primaryContainer.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.check_circle_rounded, color: cs.primary),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Оптимизация батареи отключена — сервис будет работать стабильно',
+                      style: TextStyle(color: cs.onSurface, fontSize: 14),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 40),
+
+          FilledButton(
+            onPressed: _finishOnboarding,
+            child: const Text('Начать'),
+          ),
+          if (!_batteryExempt) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Можно пропустить, но сервис может быть нестабильным',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── Shared permission tile ──
 
   Widget _permissionTile(
     ColorScheme cs, {

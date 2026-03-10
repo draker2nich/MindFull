@@ -5,7 +5,6 @@ import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.ContentValues
 import android.content.Intent
-import android.database.sqlite.SQLiteDatabase
 import android.os.Bundle
 import android.os.CountDownTimer
 import android.view.View
@@ -20,8 +19,11 @@ class PauseActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_TARGET_PACKAGE = "target_package"
         const val EXTRA_APP_NAME = "app_name"
+
         private const val TIMER_DURATION_MS = 60_000L
         private const val TICK_INTERVAL_MS = 1_000L
+        private const val KEY_REMAINING_MS = "remaining_ms"
+        private const val KEY_NOTE_TEXT = "note_text"
 
         // Дыхательный цикл: вдох 4с → задержка 2с → выдох 4с = 10с
         private const val INHALE_MS = 4_000L
@@ -39,6 +41,8 @@ class PauseActivity : AppCompatActivity() {
     private var appName: String = ""
     private var timer: CountDownTimer? = null
     private var breathAnimator: AnimatorSet? = null
+    private var remainingMs: Long = TIMER_DURATION_MS
+    private var timerFinished = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,15 +57,35 @@ class PauseActivity : AppCompatActivity() {
         btnProceed = findViewById(R.id.btnProceed)
         etNote = findViewById(R.id.etNote)
 
-        btnProceed.text = "Подожди..."
-        btnProceed.isEnabled = false
+        // Восстанавливаем состояние после rotation
+        if (savedInstanceState != null) {
+            remainingMs = savedInstanceState.getLong(KEY_REMAINING_MS, TIMER_DURATION_MS)
+            val savedNote = savedInstanceState.getString(KEY_NOTE_TEXT, "")
+            etNote.setText(savedNote)
+        }
+
+        timerFinished = remainingMs <= 0
+
+        if (timerFinished) {
+            activateButton()
+            tvTimer.text = "0"
+        } else {
+            btnProceed.text = "Подожди..."
+            btnProceed.isEnabled = false
+            startTimer(remainingMs)
+        }
+
+        startBreathAnimation()
 
         btnProceed.setOnClickListener {
             saveNoteAndProceed()
         }
+    }
 
-        startTimer()
-        startBreathAnimation()
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putLong(KEY_REMAINING_MS, remainingMs)
+        outState.putString(KEY_NOTE_TEXT, etNote.text?.toString() ?: "")
     }
 
     override fun onDestroy() {
@@ -70,26 +94,32 @@ class PauseActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    // Запрет кнопки "Назад" пока таймер идёт
+    // Запрет кнопки "Назад" пока таймер идёт.
+    // Если таймер истёк — back просто закрывает без перехода в целевое приложение.
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (!btnProceed.isEnabled) {
-            // Игнорируем — таймер ещё идёт
+        if (!timerFinished) {
+            // Таймер ещё идёт — игнорируем
             return
         }
-        super.onBackPressed()
+        // Таймер закончен — позволяем закрыть (без перехода в целевое приложение)
+        finish()
     }
 
     // ── Таймер ──
 
-    private fun startTimer() {
-        timer = object : CountDownTimer(TIMER_DURATION_MS, TICK_INTERVAL_MS) {
+    private fun startTimer(durationMs: Long) {
+        timer?.cancel()
+        timer = object : CountDownTimer(durationMs, TICK_INTERVAL_MS) {
             override fun onTick(millisLeft: Long) {
+                remainingMs = millisLeft
                 val seconds = (millisLeft / 1000).toInt()
                 tvTimer.text = seconds.toString()
             }
 
             override fun onFinish() {
+                remainingMs = 0
+                timerFinished = true
                 tvTimer.text = "0"
                 activateButton()
             }
@@ -97,10 +127,10 @@ class PauseActivity : AppCompatActivity() {
     }
 
     private fun activateButton() {
+        timerFinished = true
         btnProceed.isEnabled = true
         btnProceed.text = "Открыть $appName"
 
-        // Плавное появление
         btnProceed.alpha = 0.7f
         btnProceed.animate()
             .alpha(1f)
@@ -115,7 +145,6 @@ class PauseActivity : AppCompatActivity() {
     }
 
     private fun runBreathCycle() {
-        // Вдох: масштаб 1.0 → 1.3
         val inhaleX = ObjectAnimator.ofFloat(breathCircle, "scaleX", 1.0f, 1.3f).apply {
             duration = INHALE_MS
             interpolator = AccelerateDecelerateInterpolator()
@@ -125,12 +154,10 @@ class PauseActivity : AppCompatActivity() {
             interpolator = AccelerateDecelerateInterpolator()
         }
 
-        // Задержка: остаётся на 1.3 (используем ValueAnimator как delay)
         val hold = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = HOLD_MS
         }
 
-        // Выдох: масштаб 1.3 → 1.0
         val exhaleX = ObjectAnimator.ofFloat(breathCircle, "scaleX", 1.3f, 1.0f).apply {
             duration = EXHALE_MS
             interpolator = AccelerateDecelerateInterpolator()
@@ -140,7 +167,6 @@ class PauseActivity : AppCompatActivity() {
             interpolator = AccelerateDecelerateInterpolator()
         }
 
-        // Обновляем текст подсказки
         inhaleX.addUpdateListener {
             if (it.animatedFraction < 0.05f) tvBreathHint.text = "Вдох..."
         }
@@ -158,7 +184,6 @@ class PauseActivity : AppCompatActivity() {
             playSequentially(inhaleSet, hold, exhaleSet)
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
-                    // Зацикливаем, если activity ещё жива
                     if (!isFinishing && !isDestroyed) {
                         runBreathCycle()
                     }
@@ -179,10 +204,14 @@ class PauseActivity : AppCompatActivity() {
 
         // Открываем целевое приложение
         if (targetPackage.isNotEmpty()) {
-            val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
-            if (launchIntent != null) {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(launchIntent)
+            try {
+                val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
+                if (launchIntent != null) {
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(launchIntent)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PauseActivity", "Failed to launch $targetPackage", e)
             }
         }
 

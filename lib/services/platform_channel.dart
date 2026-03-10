@@ -54,6 +54,14 @@ class PlatformChannel {
     }
   }
 
+  static Future<bool> hasBatteryOptimizationExemption() async {
+    try {
+      return await _channel.invokeMethod<bool>('hasBatteryOptimizationExemption') ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
   static Future<void> requestUsageAccess() async {
     await _channel.invokeMethod('requestUsageAccess');
   }
@@ -62,10 +70,15 @@ class PlatformChannel {
     await _channel.invokeMethod('requestOverlayPermission');
   }
 
-  static Future<({bool usageAccess, bool overlay})> checkAllPermissions() async {
+  static Future<void> requestBatteryOptimizationExemption() async {
+    await _channel.invokeMethod('requestBatteryOptimizationExemption');
+  }
+
+  static Future<({bool usageAccess, bool overlay, bool battery})> checkAllPermissions() async {
     final usage = await hasUsageAccess();
     final overlay = await hasOverlayPermission();
-    return (usageAccess: usage, overlay: overlay);
+    final battery = await hasBatteryOptimizationExemption();
+    return (usageAccess: usage, overlay: overlay, battery: battery);
   }
 
   // ── Foreground Service ──

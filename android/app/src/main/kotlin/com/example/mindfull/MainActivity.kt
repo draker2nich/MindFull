@@ -1,12 +1,14 @@
 package com.example.mindfull
 
+import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
+import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Base64
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -16,6 +18,11 @@ import java.io.ByteArrayOutputStream
 class MainActivity : FlutterActivity() {
 
     private lateinit var permissionHelper: PermissionHelper
+
+    companion object {
+        private const val PREFS_NAME = "mindful_prefs"
+        private const val KEY_SERVICE_ENABLED = "service_enabled"
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -34,12 +41,19 @@ class MainActivity : FlutterActivity() {
                 "hasOverlayPermission" -> {
                     result.success(permissionHelper.hasOverlayPermission())
                 }
+                "hasBatteryOptimizationExemption" -> {
+                    result.success(isBatteryOptimizationIgnored())
+                }
                 "requestUsageAccess" -> {
                     permissionHelper.requestUsageStatsPermission()
                     result.success(null)
                 }
                 "requestOverlayPermission" -> {
                     permissionHelper.requestOverlayPermission()
+                    result.success(null)
+                }
+                "requestBatteryOptimizationExemption" -> {
+                    requestBatteryOptimizationExemption()
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -56,12 +70,21 @@ class MainActivity : FlutterActivity() {
                     val intent = Intent(this, AppMonitorService::class.java)
                     intent.action = AppMonitorService.ACTION_START
                     startForegroundService(intent)
+                    // Запоминаем что пользователь включил сервис (для BootReceiver)
+                    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit()
+                        .putBoolean(KEY_SERVICE_ENABLED, true)
+                        .apply()
                     result.success(null)
                 }
                 "stopService" -> {
                     val intent = Intent(this, AppMonitorService::class.java)
                     intent.action = AppMonitorService.ACTION_STOP
                     startService(intent)
+                    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit()
+                        .putBoolean(KEY_SERVICE_ENABLED, false)
+                        .apply()
                     result.success(null)
                 }
                 "isServiceRunning" -> {
@@ -97,16 +120,29 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /**
-     * Получает список приложений с launcher-иконками.
-     * Исключает себя и системные приложения без launcher activity.
-     * Возвращает List<Map> с полями: packageName, appName, iconBase64
-     */
+    // ── Battery Optimization ──
+
+    private fun isBatteryOptimizationIgnored(): Boolean {
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        return pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun requestBatteryOptimizationExemption() {
+        if (!isBatteryOptimizationIgnored()) {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+        }
+    }
+
+    // ── Установленные приложения ──
+
     private fun getInstalledLauncherApps(): List<Map<String, String>> {
         val intent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
         }
-        val resolveInfos: List<ResolveInfo> = packageManager.queryIntentActivities(intent, 0)
+        val resolveInfos = packageManager.queryIntentActivities(intent, 0)
         val myPackage = packageName
 
         return resolveInfos
@@ -125,16 +161,14 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun drawableToBase64(drawable: Drawable): String {
-        val size = 72 // px, достаточно для списка
+        val size = 72
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         drawable.setBounds(0, 0, size, size)
         drawable.draw(canvas)
-
         val stream = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.PNG, 90, stream)
         bitmap.recycle()
-
         return Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
     }
 }

@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.mindfull"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -20,15 +20,21 @@ android {
 
     defaultConfig {
         applicationId = "com.example.mindfull"
-        minSdk = 26 // Android 8.0+ для NotificationChannel и foregroundServiceType
-        targetSdk = flutter.targetSdkVersion
+        minSdk = 26
+        targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = signingConfigs.getByName("debug") // TODO: заменить на release keystore
         }
     }
 }
@@ -37,6 +43,7 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.lifecycle:lifecycle-process:2.8.7")
 }
 
 flutter {
