@@ -1,4 +1,32 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/services.dart';
+
+/// Информация об установленном приложении
+class AppInfo {
+  final String packageName;
+  final String appName;
+  final Uint8List? iconBytes;
+
+  AppInfo({
+    required this.packageName,
+    required this.appName,
+    this.iconBytes,
+  });
+
+  factory AppInfo.fromMap(Map<dynamic, dynamic> map) {
+    Uint8List? icon;
+    final b64 = map['iconBase64'] as String?;
+    if (b64 != null && b64.isNotEmpty) {
+      icon = base64Decode(b64);
+    }
+    return AppInfo(
+      packageName: map['packageName'] as String,
+      appName: map['appName'] as String,
+      iconBytes: icon,
+    );
+  }
+}
 
 /// Обёртка над MethodChannel для общения с нативным Android кодом.
 class PlatformChannel {
@@ -6,10 +34,10 @@ class PlatformChannel {
 
   static const _channel = MethodChannel('com.example.mindfull/permissions');
   static const _serviceChannel = MethodChannel('com.example.mindfull/service');
+  static const _appsChannel = MethodChannel('com.example.mindfull/apps');
 
   // ── Разрешения ──
 
-  /// Проверяет, выдано ли разрешение Usage Access (PACKAGE_USAGE_STATS)
   static Future<bool> hasUsageAccess() async {
     try {
       return await _channel.invokeMethod<bool>('hasUsageAccess') ?? false;
@@ -18,7 +46,6 @@ class PlatformChannel {
     }
   }
 
-  /// Проверяет, выдано ли разрешение Overlay (SYSTEM_ALERT_WINDOW)
   static Future<bool> hasOverlayPermission() async {
     try {
       return await _channel.invokeMethod<bool>('hasOverlayPermission') ?? false;
@@ -27,25 +54,14 @@ class PlatformChannel {
     }
   }
 
-  /// Открывает системные настройки Usage Access
   static Future<void> requestUsageAccess() async {
-    try {
-      await _channel.invokeMethod('requestUsageAccess');
-    } on PlatformException catch (e) {
-      throw Exception('Не удалось открыть настройки: ${e.message}');
-    }
+    await _channel.invokeMethod('requestUsageAccess');
   }
 
-  /// Открывает системные настройки Overlay
   static Future<void> requestOverlayPermission() async {
-    try {
-      await _channel.invokeMethod('requestOverlayPermission');
-    } on PlatformException catch (e) {
-      throw Exception('Не удалось открыть настройки: ${e.message}');
-    }
+    await _channel.invokeMethod('requestOverlayPermission');
   }
 
-  /// Проверяет оба разрешения разом
   static Future<({bool usageAccess, bool overlay})> checkAllPermissions() async {
     final usage = await hasUsageAccess();
     final overlay = await hasOverlayPermission();
@@ -54,25 +70,14 @@ class PlatformChannel {
 
   // ── Foreground Service ──
 
-  /// Запускает фоновый сервис мониторинга
   static Future<void> startMonitorService() async {
-    try {
-      await _serviceChannel.invokeMethod('startService');
-    } on PlatformException catch (e) {
-      throw Exception('Не удалось запустить сервис: ${e.message}');
-    }
+    await _serviceChannel.invokeMethod('startService');
   }
 
-  /// Останавливает фоновый сервис
   static Future<void> stopMonitorService() async {
-    try {
-      await _serviceChannel.invokeMethod('stopService');
-    } on PlatformException catch (e) {
-      throw Exception('Не удалось остановить сервис: ${e.message}');
-    }
+    await _serviceChannel.invokeMethod('stopService');
   }
 
-  /// Проверяет, запущен ли сервис
   static Future<bool> isServiceRunning() async {
     try {
       return await _serviceChannel.invokeMethod<bool>('isServiceRunning') ?? false;
@@ -81,14 +86,24 @@ class PlatformChannel {
     }
   }
 
-  /// Передаёт список пакетов для отслеживания в сервис
   static Future<void> updateMonitoredApps(List<String> packageNames) async {
+    await _serviceChannel.invokeMethod('updateMonitoredApps', {
+      'packages': packageNames,
+    });
+  }
+
+  // ── Установленные приложения ──
+
+  static Future<List<AppInfo>> getInstalledApps() async {
     try {
-      await _serviceChannel.invokeMethod('updateMonitoredApps', {
-        'packages': packageNames,
-      });
-    } on PlatformException catch (e) {
-      throw Exception('Не удалось обновить список: ${e.message}');
+      final result = await _appsChannel.invokeMethod<List<dynamic>>('getInstalledApps');
+      if (result == null) return [];
+      return result
+          .cast<Map<dynamic, dynamic>>()
+          .map(AppInfo.fromMap)
+          .toList();
+    } on PlatformException {
+      return [];
     }
   }
 }

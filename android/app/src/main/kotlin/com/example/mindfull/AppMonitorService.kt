@@ -68,7 +68,11 @@ class AppMonitorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                isRunning = false
+                handler.removeCallbacks(pollRunnable)
+                stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
+                Log.d(TAG, "Service stopped via ACTION_STOP")
                 return START_NOT_STICKY
             }
             else -> {
