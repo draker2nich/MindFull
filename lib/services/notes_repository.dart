@@ -32,8 +32,6 @@ class NotesRepository {
 
   static Database? _db;
 
-  /// Открываем ту же БД, что создаёт NoteDbHelper на Kotlin стороне.
-  /// Android хранит её по умолчанию в /data/data/<pkg>/databases/
   static Future<Database> _getDb() async {
     if (_db != null) return _db!;
 
@@ -42,10 +40,8 @@ class NotesRepository {
 
     _db = await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
-        // Создаём таблицу если БД ещё не существует
-        // (на случай если Flutter открыл раньше чем Kotlin)
         await db.execute('''
           CREATE TABLE IF NOT EXISTS notes (
             _id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,6 +51,16 @@ class NotesRepository {
             timestamp INTEGER NOT NULL
           )
         ''');
+        await db.execute('''
+          CREATE INDEX IF NOT EXISTS idx_notes_timestamp ON notes (timestamp DESC)
+        ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('''
+            CREATE INDEX IF NOT EXISTS idx_notes_timestamp ON notes (timestamp DESC)
+          ''');
+        }
       },
     );
     return _db!;
@@ -62,7 +68,6 @@ class NotesRepository {
 
   static Future<List<NoteEntry>> getAllNotes() async {
     final db = await _getDb();
-    // Проверяем что таблица существует
     try {
       final rows = await db.query(
         'notes',
@@ -71,6 +76,16 @@ class NotesRepository {
       return rows.map(NoteEntry.fromMap).toList();
     } catch (_) {
       return [];
+    }
+  }
+
+  static Future<int> getNotesCount() async {
+    final db = await _getDb();
+    try {
+      final result = await db.rawQuery('SELECT COUNT(*) as cnt FROM notes');
+      return Sqflite.firstIntValue(result) ?? 0;
+    } catch (_) {
+      return 0;
     }
   }
 

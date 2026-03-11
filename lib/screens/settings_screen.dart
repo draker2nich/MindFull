@@ -48,7 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     final perms = await PlatformChannel.checkAllPermissions();
     final prefs = await SharedPreferences.getInstance();
     final monitored = prefs.getStringList('monitored_packages') ?? [];
-    final cooldown = prefs.getInt('cooldown_minutes') ?? 5;
+    final cooldown = await PlatformChannel.getCooldownMinutes();
     if (!mounted) return;
     setState(() {
       _serviceRunning = running;
@@ -82,8 +82,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   }
 
   Future<void> _setCooldown(int minutes) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('cooldown_minutes', minutes);
+    await PlatformChannel.setCooldownMinutes(minutes);
     setState(() => _cooldownMinutes = minutes);
   }
 
@@ -125,8 +124,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       // Очищаем SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('monitored_packages');
-      await prefs.remove('cooldown_minutes');
-      await prefs.setBool('service_enabled', false);
+      // Сбрасываем cooldown на дефолт через native
+      await PlatformChannel.setCooldownMinutes(5);
       // Не сбрасываем onboarding_done чтобы не показывать онбординг заново
 
       // Обновляем мониторинг (пустой список)

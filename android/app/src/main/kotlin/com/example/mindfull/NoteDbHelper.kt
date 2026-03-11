@@ -13,7 +13,7 @@ class NoteDbHelper(context: Context) : SQLiteOpenHelper(
 
     companion object {
         const val DATABASE_NAME = "mindful_notes.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2 // Bumped for index
         const val TABLE_NAME = "notes"
         const val COL_ID = "_id"
         const val COL_TEXT = "text"
@@ -32,10 +32,19 @@ class NoteDbHelper(context: Context) : SQLiteOpenHelper(
                 $COL_TIMESTAMP INTEGER NOT NULL
             )
         """.trimIndent())
+        db.execSQL("""
+            CREATE INDEX idx_notes_timestamp ON $TABLE_NAME ($COL_TIMESTAMP DESC)
+        """.trimIndent())
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_NAME")
-        onCreate(db)
+        if (oldVersion < 2) {
+            // Добавляем индекс для существующих пользователей
+            try {
+                db.execSQL("""
+                    CREATE INDEX IF NOT EXISTS idx_notes_timestamp ON $TABLE_NAME ($COL_TIMESTAMP DESC)
+                """.trimIndent())
+            } catch (_: Exception) { }
+        }
     }
 }

@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Process
 import android.provider.Settings
+import androidx.core.app.NotificationManagerCompat
 
 class PermissionHelper(private val activity: Activity) {
 
@@ -32,6 +33,13 @@ class PermissionHelper(private val activity: Activity) {
     }
 
     /**
+     * Проверяет, разрешены ли уведомления (Android 13+)
+     */
+    fun hasNotificationPermission(): Boolean {
+        return NotificationManagerCompat.from(activity).areNotificationsEnabled()
+    }
+
+    /**
      * Открывает системные настройки Usage Access
      */
     fun requestUsageStatsPermission() {
@@ -50,5 +58,18 @@ class PermissionHelper(private val activity: Activity) {
         )
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         activity.startActivity(intent)
+    }
+
+    /**
+     * Открывает настройки уведомлений приложения (Android 13+)
+     */
+    fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            activity.startActivity(intent)
+        }
     }
 }

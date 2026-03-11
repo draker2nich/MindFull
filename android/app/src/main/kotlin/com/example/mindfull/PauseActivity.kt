@@ -4,6 +4,7 @@ import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.CountDownTimer
@@ -22,18 +23,19 @@ class PauseActivity : AppCompatActivity() {
 
         private const val TIMER_DURATION_MS = 60_000L
         private const val TICK_INTERVAL_MS = 1_000L
-        private const val KEY_REMAINING_MS = "remaining_ms"
-        private const val KEY_NOTE_TEXT = "note_text"
 
-        // Дыхательный цикл: вдох 4с → задержка 2с → выдох 4с = 10с
         private const val INHALE_MS = 4_000L
         private const val HOLD_MS = 2_000L
         private const val EXHALE_MS = 4_000L
+
+        private const val PREFS_NAME = "mindful_prefs"
+        private const val KEY_COOLDOWN_PREFIX = "cooldown_"
     }
 
     private lateinit var tvTimer: TextView
     private lateinit var tvBreathHint: TextView
     private lateinit var breathCircle: View
+    private lateinit var breathGlow: View
     private lateinit var btnProceed: MaterialButton
     private lateinit var etNote: TextInputEditText
 
@@ -43,6 +45,12 @@ class PauseActivity : AppCompatActivity() {
     private var breathAnimator: AnimatorSet? = null
     private var remainingMs: Long = TIMER_DURATION_MS
     private var timerFinished = false
+    private var didProceedToApp = false
+    private var noteSaved = false // Защита от двойного сохранения
+
+    // configChanges="orientation|screenSize|keyboardHidden" в манифесте
+    // значит onCreate вызывается 1 раз, rotation обрабатывается без пересоздания.
+    // savedInstanceState не нужен — таймер продолжает работать.
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,38 +62,34 @@ class PauseActivity : AppCompatActivity() {
         tvTimer = findViewById(R.id.tvTimer)
         tvBreathHint = findViewById(R.id.tvBreathHint)
         breathCircle = findViewById(R.id.breathCircle)
+        breathGlow = findViewById(R.id.breathGlow)
         btnProceed = findViewById(R.id.btnProceed)
         etNote = findViewById(R.id.etNote)
 
-        // Восстанавливаем состояние после rotation
-        if (savedInstanceState != null) {
-            remainingMs = savedInstanceState.getLong(KEY_REMAINING_MS, TIMER_DURATION_MS)
-            val savedNote = savedInstanceState.getString(KEY_NOTE_TEXT, "")
-            etNote.setText(savedNote)
-        }
+        findViewById<TextView>(R.id.tvSubtitle)?.text = "Перед открытием $appName"
 
-        timerFinished = remainingMs <= 0
+        btnProceed.text = "Подожди..."
+        btnProceed.isEnabled = false
+        btnProceed.alpha = 0.5f
 
-        if (timerFinished) {
-            activateButton()
-            tvTimer.text = "0"
-        } else {
-            btnProceed.text = "Подожди..."
-            btnProceed.isEnabled = false
-            startTimer(remainingMs)
-        }
-
+        startTimer(TIMER_DURATION_MS)
         startBreathAnimation()
 
         btnProceed.setOnClickListener {
-            saveNoteAndProceed()
+            didProceedToApp = true
+            saveNoteOnce()
+            setCooldownForPackage(targetPackage)
+            launchTargetApp()
+            finish()
         }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putLong(KEY_REMAINING_MS, remainingMs)
-        outState.putString(KEY_NOTE_TEXT, etNote.text?.toString() ?: "")
+    override fun onPause() {
+        super.onPause()
+        // Если свернул без нажатия "Открыть" — сохраняем заметку, но НЕ cooldown
+        if (!didProceedToApp) {
+            saveNoteOnce()
+        }
     }
 
     override fun onDestroy() {
@@ -94,15 +98,10 @@ class PauseActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    // Запрет кнопки "Назад" пока таймер идёт.
-    // Если таймер истёк — back просто закрывает без перехода в целевое приложение.
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (!timerFinished) {
-            // Таймер ещё идёт — игнорируем
-            return
-        }
-        // Таймер закончен — позволяем закрыть (без перехода в целевое приложение)
+        if (!timerFinished) return
+        saveNoteOnce()
         finish()
     }
 
@@ -113,8 +112,7 @@ class PauseActivity : AppCompatActivity() {
         timer = object : CountDownTimer(durationMs, TICK_INTERVAL_MS) {
             override fun onTick(millisLeft: Long) {
                 remainingMs = millisLeft
-                val seconds = (millisLeft / 1000).toInt()
-                tvTimer.text = seconds.toString()
+                tvTimer.text = (millisLeft / 1000).toInt().toString()
             }
 
             override fun onFinish() {
@@ -130,8 +128,6 @@ class PauseActivity : AppCompatActivity() {
         timerFinished = true
         btnProceed.isEnabled = true
         btnProceed.text = "Открыть $appName"
-
-        btnProceed.alpha = 0.7f
         btnProceed.animate()
             .alpha(1f)
             .setDuration(400)
@@ -145,40 +141,56 @@ class PauseActivity : AppCompatActivity() {
     }
 
     private fun runBreathCycle() {
-        val inhaleX = ObjectAnimator.ofFloat(breathCircle, "scaleX", 1.0f, 1.3f).apply {
+        val inhaleCircleX = ObjectAnimator.ofFloat(breathCircle, "scaleX", 1.0f, 1.25f).apply {
+            duration = INHALE_MS; interpolator = AccelerateDecelerateInterpolator()
+        }
+        val inhaleCircleY = ObjectAnimator.ofFloat(breathCircle, "scaleY", 1.0f, 1.25f).apply {
+            duration = INHALE_MS; interpolator = AccelerateDecelerateInterpolator()
+        }
+        val inhaleGlowX = ObjectAnimator.ofFloat(breathGlow, "scaleX", 1.0f, 1.4f).apply {
+            duration = INHALE_MS; interpolator = AccelerateDecelerateInterpolator()
+        }
+        val inhaleGlowY = ObjectAnimator.ofFloat(breathGlow, "scaleY", 1.0f, 1.4f).apply {
+            duration = INHALE_MS; interpolator = AccelerateDecelerateInterpolator()
+        }
+        val inhaleGlowAlpha = ObjectAnimator.ofFloat(breathGlow, "alpha", 0.4f, 0.8f).apply {
             duration = INHALE_MS
-            interpolator = AccelerateDecelerateInterpolator()
-        }
-        val inhaleY = ObjectAnimator.ofFloat(breathCircle, "scaleY", 1.0f, 1.3f).apply {
-            duration = INHALE_MS
-            interpolator = AccelerateDecelerateInterpolator()
         }
 
-        val hold = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = HOLD_MS
-        }
+        val hold = ValueAnimator.ofFloat(0f, 1f).apply { duration = HOLD_MS }
 
-        val exhaleX = ObjectAnimator.ofFloat(breathCircle, "scaleX", 1.3f, 1.0f).apply {
+        val exhaleCircleX = ObjectAnimator.ofFloat(breathCircle, "scaleX", 1.25f, 1.0f).apply {
+            duration = EXHALE_MS; interpolator = AccelerateDecelerateInterpolator()
+        }
+        val exhaleCircleY = ObjectAnimator.ofFloat(breathCircle, "scaleY", 1.25f, 1.0f).apply {
+            duration = EXHALE_MS; interpolator = AccelerateDecelerateInterpolator()
+        }
+        val exhaleGlowX = ObjectAnimator.ofFloat(breathGlow, "scaleX", 1.4f, 1.0f).apply {
+            duration = EXHALE_MS; interpolator = AccelerateDecelerateInterpolator()
+        }
+        val exhaleGlowY = ObjectAnimator.ofFloat(breathGlow, "scaleY", 1.4f, 1.0f).apply {
+            duration = EXHALE_MS; interpolator = AccelerateDecelerateInterpolator()
+        }
+        val exhaleGlowAlpha = ObjectAnimator.ofFloat(breathGlow, "alpha", 0.8f, 0.4f).apply {
             duration = EXHALE_MS
-            interpolator = AccelerateDecelerateInterpolator()
-        }
-        val exhaleY = ObjectAnimator.ofFloat(breathCircle, "scaleY", 1.3f, 1.0f).apply {
-            duration = EXHALE_MS
-            interpolator = AccelerateDecelerateInterpolator()
         }
 
-        inhaleX.addUpdateListener {
+        inhaleCircleX.addUpdateListener {
             if (it.animatedFraction < 0.05f) tvBreathHint.text = "Вдох..."
         }
         hold.addUpdateListener {
             if (it.animatedFraction < 0.05f) tvBreathHint.text = "Задержка..."
         }
-        exhaleX.addUpdateListener {
+        exhaleCircleX.addUpdateListener {
             if (it.animatedFraction < 0.05f) tvBreathHint.text = "Выдох..."
         }
 
-        val inhaleSet = AnimatorSet().apply { playTogether(inhaleX, inhaleY) }
-        val exhaleSet = AnimatorSet().apply { playTogether(exhaleX, exhaleY) }
+        val inhaleSet = AnimatorSet().apply {
+            playTogether(inhaleCircleX, inhaleCircleY, inhaleGlowX, inhaleGlowY, inhaleGlowAlpha)
+        }
+        val exhaleSet = AnimatorSet().apply {
+            playTogether(exhaleCircleX, exhaleCircleY, exhaleGlowX, exhaleGlowY, exhaleGlowAlpha)
+        }
 
         breathAnimator = AnimatorSet().apply {
             playSequentially(inhaleSet, hold, exhaleSet)
@@ -193,32 +205,14 @@ class PauseActivity : AppCompatActivity() {
         }
     }
 
-    // ── Сохранение заметки и переход ──
+    // ── Заметка (с защитой от двойного сохранения) ──
 
-    private fun saveNoteAndProceed() {
-        val noteText = etNote.text?.toString()?.trim() ?: ""
+    private fun saveNoteOnce() {
+        if (noteSaved) return
+        val text = etNote.text?.toString()?.trim() ?: ""
+        if (text.isEmpty()) return
+        noteSaved = true
 
-        if (noteText.isNotEmpty()) {
-            saveNote(noteText)
-        }
-
-        // Открываем целевое приложение
-        if (targetPackage.isNotEmpty()) {
-            try {
-                val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
-                if (launchIntent != null) {
-                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    startActivity(launchIntent)
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("PauseActivity", "Failed to launch $targetPackage", e)
-            }
-        }
-
-        finish()
-    }
-
-    private fun saveNote(text: String) {
         try {
             val db = NoteDbHelper(this).writableDatabase
             val values = ContentValues().apply {
@@ -230,7 +224,30 @@ class PauseActivity : AppCompatActivity() {
             db.insert(NoteDbHelper.TABLE_NAME, null, values)
             db.close()
         } catch (e: Exception) {
+            noteSaved = false // Позволяем повторную попытку при ошибке
             android.util.Log.e("PauseActivity", "Failed to save note", e)
+        }
+    }
+
+    // ── Cooldown ──
+
+    private fun setCooldownForPackage(pkg: String) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putLong(KEY_COOLDOWN_PREFIX + pkg, System.currentTimeMillis()).apply()
+    }
+
+    // ── Переход в целевое приложение ──
+
+    private fun launchTargetApp() {
+        if (targetPackage.isEmpty()) return
+        try {
+            val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(launchIntent)
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PauseActivity", "Failed to launch $targetPackage", e)
         }
     }
 }

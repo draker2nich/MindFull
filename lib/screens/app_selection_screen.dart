@@ -14,6 +14,7 @@ class _AppSelectionScreenState extends State<AppSelectionScreen> {
   Set<String> _selected = {};
   bool _loading = true;
   String _search = '';
+  String? _error;
 
   @override
   void initState() {
@@ -22,23 +23,39 @@ class _AppSelectionScreenState extends State<AppSelectionScreen> {
   }
 
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getStringList('monitored_packages') ?? [];
-    final apps = await PlatformChannel.getInstalledApps();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getStringList('monitored_packages') ?? [];
+      final apps = await PlatformChannel.getInstalledApps();
 
-    if (!mounted) return;
-    setState(() {
-      _allApps = apps;
-      _selected = saved.toSet();
-      _loading = false;
-    });
+      if (!mounted) return;
+      setState(() {
+        _allApps = apps;
+        _selected = saved.toSet();
+        _loading = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Не удалось загрузить список приложений';
+      });
+    }
   }
 
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     final list = _selected.toList();
     await prefs.setStringList('monitored_packages', list);
-    await PlatformChannel.updateMonitoredApps(list);
+
+    // Обновляем сервис в реальном времени если он запущен
+    try {
+      final running = await PlatformChannel.isServiceRunning();
+      if (running) {
+        await PlatformChannel.updateMonitoredApps(list);
+      }
+    } catch (_) {}
   }
 
   void _toggle(String packageName) {
@@ -89,9 +106,7 @@ class _AppSelectionScreenState extends State<AppSelectionScreen> {
           ),
         ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _buildList(cs),
+      body: _buildBody(cs),
       bottomNavigationBar: _selected.isNotEmpty
           ? Container(
               padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
@@ -121,6 +136,27 @@ class _AppSelectionScreenState extends State<AppSelectionScreen> {
     );
   }
 
+  Widget _buildBody(ColorScheme cs) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline_rounded, size: 48, color: cs.error),
+            const SizedBox(height: 16),
+            Text(_error!, style: TextStyle(color: cs.onSurfaceVariant)),
+            const SizedBox(height: 16),
+            FilledButton(onPressed: _load, child: const Text('Повторить')),
+          ],
+        ),
+      );
+    }
+    return _buildList(cs);
+  }
+
   Widget _buildList(ColorScheme cs) {
     final apps = _filtered;
 
@@ -133,7 +169,6 @@ class _AppSelectionScreenState extends State<AppSelectionScreen> {
       );
     }
 
-    // Показываем выбранные сверху
     final selectedApps = apps.where((a) => _selected.contains(a.packageName)).toList();
     final otherApps = apps.where((a) => !_selected.contains(a.packageName)).toList();
 

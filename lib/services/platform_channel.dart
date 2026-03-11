@@ -105,6 +105,20 @@ class PlatformChannel {
     });
   }
 
+  static Future<void> setCooldownMinutes(int minutes) async {
+    await _serviceChannel.invokeMethod('setCooldownMinutes', {
+      'minutes': minutes,
+    });
+  }
+
+  static Future<int> getCooldownMinutes() async {
+    try {
+      return await _serviceChannel.invokeMethod<int>('getCooldownMinutes') ?? 5;
+    } on PlatformException {
+      return 5;
+    }
+  }
+
   // ── Установленные приложения ──
 
   static Future<List<AppInfo>> getInstalledApps() async {

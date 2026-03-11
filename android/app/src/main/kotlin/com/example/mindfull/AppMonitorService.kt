@@ -27,10 +27,22 @@ class AppMonitorService : Service() {
         private const val CHANNEL_ID = "mindful_pause_monitor"
         private const val NOTIFICATION_ID = 1001
         private const val POLL_INTERVAL_MS = 500L
-        private const val DEFAULT_COOLDOWN_MS = 5 * 60 * 1000L
         private const val PREFS_NAME = "mindful_prefs"
         private const val KEY_MONITORED = "monitored_packages"
         private const val KEY_COOLDOWN_MINUTES = "cooldown_minutes"
+        private const val KEY_COOLDOWN_PREFIX = "cooldown_"
+
+        // Пакеты, которые никогда не перехватываем
+        private val IGNORED_PACKAGES = setOf(
+            "com.example.mindfull",
+            "com.android.systemui",
+            "com.android.launcher",
+            "com.android.launcher3",
+            "com.google.android.apps.nexuslauncher",
+            "com.sec.android.app.launcher", // Samsung
+            "com.miui.home",                // Xiaomi
+            "com.huawei.android.launcher",  // Huawei
+        )
 
         @Volatile
         var isRunning = false
@@ -47,13 +59,11 @@ class AppMonitorService : Service() {
     private var usageStatsManager: UsageStatsManager? = null
     private lateinit var prefs: SharedPreferences
     private var powerManager: PowerManager? = null
-
-    // Cooldown: packageName -> timestamp последнего срабатывания
-    private val cooldownMap = mutableMapOf<String, Long>()
     private var lastForegroundPackage: String? = null
     private var isScreenOn = true
+    private var pauseShowing = false
+    private var pauseDismissedAt: Long = 0 // Защита от race condition
 
-    // Screen on/off receiver
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
@@ -87,14 +97,11 @@ class AppMonitorService : Service() {
         powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-        // Регистрируем receiver для screen on/off
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
         }
         registerReceiver(screenReceiver, filter)
-
-        // Начальное состояние экрана
         isScreenOn = powerManager?.isInteractive ?: true
     }
 
@@ -112,10 +119,11 @@ class AppMonitorService : Service() {
                 startForegroundWithNotification()
                 isRunning = true
                 lastForegroundPackage = null
+                pauseShowing = false
                 if (isScreenOn) {
                     handler.post(pollRunnable)
                 }
-                Log.d(TAG, "Service started (screen ${if (isScreenOn) "ON" else "OFF"})")
+                Log.d(TAG, "Service started")
             }
         }
         return START_STICKY
@@ -124,16 +132,14 @@ class AppMonitorService : Service() {
     override fun onDestroy() {
         isRunning = false
         handler.removeCallbacks(pollRunnable)
-        try {
-            unregisterReceiver(screenReceiver)
-        } catch (_: Exception) { }
+        try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
         Log.d(TAG, "Service destroyed")
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // ── Foreground Notification ──
+    // ── Notification ──
 
     private fun startForegroundWithNotification() {
         val channel = NotificationChannel(
@@ -157,7 +163,6 @@ class AppMonitorService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Кнопка быстрого отключения в notification
         val stopIntent = Intent(this, AppMonitorService::class.java).apply {
             action = ACTION_STOP
         }
@@ -171,30 +176,44 @@ class AppMonitorService : Service() {
         val notification = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Mindful Pause")
             .setContentText("Защита активна · Приложений: $monitored")
-            .setSmallIcon(android.R.drawable.ic_menu_compass) // TODO: заменить на свою иконку
+            .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setContentIntent(pendingIntent)
-            .addAction(
-                Notification.Action.Builder(
-                    null, "Выключить", stopPendingIntent
-                ).build()
-            )
+            .addAction(Notification.Action.Builder(null, "Выключить", stopPendingIntent).build())
             .setOngoing(true)
             .build()
 
         startForeground(NOTIFICATION_ID, notification)
     }
 
-    // ── Определение foreground-приложения ──
+    // ── Мониторинг ──
 
     private fun checkForegroundApp() {
         val currentPackage = getForegroundPackage() ?: return
 
-        // Не реагируем на самих себя и системные компоненты
-        if (currentPackage == packageName ||
-            currentPackage == "com.example.mindfull.pause" ||
-            currentPackage.startsWith("com.android.systemui") ||
-            currentPackage == "com.android.launcher"
-        ) return
+        // Игнорируем системные и наши пакеты
+        if (IGNORED_PACKAGES.any { currentPackage.startsWith(it) }) {
+            // Если ушли из PauseActivity — сбрасываем флаг
+            if (pauseShowing && currentPackage != packageName) {
+                pauseShowing = false
+            }
+            return
+        }
+
+        // PauseActivity на экране — не реагируем
+        if (currentPackage == packageName) {
+            pauseShowing = true
+            return
+        }
+
+        // Только что ушли из PauseActivity — даём 1.5 сек на запись cooldown
+        if (pauseShowing) {
+            pauseShowing = false
+            pauseDismissedAt = System.currentTimeMillis()
+            return
+        }
+        if (System.currentTimeMillis() - pauseDismissedAt < 1500) {
+            return
+        }
 
         // Если foreground не изменился — ничего не делаем
         if (currentPackage == lastForegroundPackage) return
@@ -204,26 +223,28 @@ class AppMonitorService : Service() {
         val monitored = prefs.getStringSet(KEY_MONITORED, emptySet()) ?: emptySet()
         if (currentPackage !in monitored) return
 
-        // Проверяем, установлено ли приложение (могло быть удалено)
+        // Проверяем установлено ли приложение
         if (!isPackageInstalled(currentPackage)) {
-            Log.d(TAG, "$currentPackage no longer installed — removing from monitored")
-            val updated = monitored.toMutableSet().apply { remove(currentPackage) }
-            prefs.edit().putStringSet(KEY_MONITORED, updated).apply()
+            Log.d(TAG, "$currentPackage uninstalled — removing")
+            prefs.edit().putStringSet(KEY_MONITORED,
+                monitored.toMutableSet().apply { remove(currentPackage) }
+            ).apply()
             return
         }
 
-        // Проверяем cooldown
+        // Проверяем cooldown (читаем из SharedPreferences, куда пишет PauseActivity)
         val cooldownMs = getCooldownMs()
         val now = System.currentTimeMillis()
-        val lastTriggered = cooldownMap[currentPackage] ?: 0L
-        if (now - lastTriggered < cooldownMs) {
-            Log.d(TAG, "Cooldown active for $currentPackage (${(cooldownMs - (now - lastTriggered)) / 1000}s left)")
+        val lastProceed = prefs.getLong(KEY_COOLDOWN_PREFIX + currentPackage, 0L)
+        if (now - lastProceed < cooldownMs) {
+            val remaining = (cooldownMs - (now - lastProceed)) / 1000
+            Log.d(TAG, "Cooldown active for $currentPackage (${remaining}s left)")
             return
         }
 
-        // Пакет в списке, cooldown прошёл → показываем паузу
-        cooldownMap[currentPackage] = now
-        Log.d(TAG, "Intercepted: $currentPackage → showing pause screen")
+        // Показываем паузу
+        Log.d(TAG, "Intercepted: $currentPackage → showing pause")
+        pauseShowing = true
         showPauseOverlay(currentPackage)
     }
 
@@ -243,16 +264,14 @@ class AppMonitorService : Service() {
         return minutes * 60 * 1000L
     }
 
-    private fun isPackageInstalled(packageName: String): Boolean {
+    private fun isPackageInstalled(pkg: String): Boolean {
         return try {
-            this.packageManager.getApplicationInfo(packageName, 0)
+            packageManager.getApplicationInfo(pkg, 0)
             true
         } catch (_: Exception) {
             false
         }
     }
-
-    // ── Показ Pause Overlay ──
 
     private fun showPauseOverlay(targetPackage: String) {
         val appName = try {

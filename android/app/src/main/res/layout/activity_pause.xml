@@ -2,62 +2,85 @@
 <androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F5F5F0"
-    android:padding="24dp">
+    android:background="@color/pause_bg"
+    android:fitsSystemWindows="true">
 
-    <!-- Заголовок -->
-    <TextView
-        android:id="@+id/tvTitle"
+    <!-- Верхний блок: заголовок + subtitle -->
+    <LinearLayout
+        android:id="@+id/headerBlock"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Сделай паузу"
-        android:textSize="24sp"
-        android:textColor="#2D3A3A"
-        android:fontFamily="sans-serif-medium"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:layout_marginTop="56dp"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginTop="48dp" />
+        app:layout_constraintEnd_toEndOf="parent">
 
-    <TextView
-        android:id="@+id/tvSubtitle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Дыши и подумай, зачем ты это открываешь"
-        android:textSize="14sp"
-        android:textColor="#6B7B7B"
-        android:layout_marginTop="8dp"
-        app:layout_constraintTop_toBottomOf="@id/tvTitle"
+        <TextView
+            android:id="@+id/tvTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Сделай паузу"
+            android:textSize="28sp"
+            android:textColor="@color/pause_text_primary"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="-0.02" />
+
+        <TextView
+            android:id="@+id/tvSubtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Дыши и подумай"
+            android:textSize="15sp"
+            android:textColor="@color/pause_text_secondary"
+            android:layout_marginTop="6dp" />
+
+    </LinearLayout>
+
+    <!-- Дыхательный круг с таймером внутри -->
+    <FrameLayout
+        android:id="@+id/breathContainer"
+        android:layout_width="220dp"
+        android:layout_height="220dp"
+        app:layout_constraintTop_toBottomOf="@id/headerBlock"
+        app:layout_constraintBottom_toTopOf="@id/noteBlock"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- Дыхательный круг -->
-    <View
-        android:id="@+id/breathCircle"
-        android:layout_width="180dp"
-        android:layout_height="180dp"
-        android:background="@drawable/breath_circle_bg"
-        app:layout_constraintTop_toBottomOf="@id/tvSubtitle"
-        app:layout_constraintBottom_toTopOf="@id/tvBreathHint"
-        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintVertical_chainStyle="packed" />
+        app:layout_constraintVertical_chainStyle="packed"
+        app:layout_constraintVertical_bias="0.35">
 
-    <!-- Таймер внутри круга (наложен поверх) -->
-    <TextView
-        android:id="@+id/tvTimer"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="60"
-        android:textSize="40sp"
-        android:textColor="#2D3A3A"
-        android:fontFamily="sans-serif-light"
-        app:layout_constraintTop_toTopOf="@id/breathCircle"
-        app:layout_constraintBottom_toBottomOf="@id/breathCircle"
-        app:layout_constraintStart_toStartOf="@id/breathCircle"
-        app:layout_constraintEnd_toEndOf="@id/breathCircle" />
+        <!-- Внешнее свечение (большой полупрозрачный круг) -->
+        <View
+            android:id="@+id/breathGlow"
+            android:layout_width="220dp"
+            android:layout_height="220dp"
+            android:layout_gravity="center"
+            android:background="@drawable/breath_glow_bg" />
+
+        <!-- Основной круг -->
+        <View
+            android:id="@+id/breathCircle"
+            android:layout_width="160dp"
+            android:layout_height="160dp"
+            android:layout_gravity="center"
+            android:background="@drawable/breath_circle_bg" />
+
+        <!-- Таймер -->
+        <TextView
+            android:id="@+id/tvTimer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="60"
+            android:textSize="48sp"
+            android:textColor="@color/pause_text_primary"
+            android:fontFamily="sans-serif-light" />
+
+    </FrameLayout>
 
     <!-- Подсказка дыхания -->
     <TextView
@@ -65,54 +88,72 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Вдох..."
-        android:textSize="16sp"
-        android:textColor="#6B9B8A"
+        android:textSize="17sp"
+        android:textColor="@color/pause_accent"
         android:fontFamily="sans-serif-medium"
-        android:layout_marginTop="24dp"
-        app:layout_constraintTop_toBottomOf="@id/breathCircle"
+        android:layout_marginTop="20dp"
+        app:layout_constraintTop_toBottomOf="@id/breathContainer"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Поле заметки -->
-    <com.google.android.material.textfield.TextInputLayout
-        android:id="@+id/tilNote"
+    <!-- Блок заметки -->
+    <LinearLayout
+        android:id="@+id/noteBlock"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginTop="32dp"
-        android:hint="Зачем ты хочешь это открыть? (необязательно)"
-        app:boxBackgroundMode="outline"
-        app:boxCornerRadiusTopStart="12dp"
-        app:boxCornerRadiusTopEnd="12dp"
-        app:boxCornerRadiusBottomStart="12dp"
-        app:boxCornerRadiusBottomEnd="12dp"
-        app:counterEnabled="true"
-        app:counterMaxLength="200"
+        android:orientation="vertical"
+        android:layout_marginTop="28dp"
+        android:paddingHorizontal="28dp"
         app:layout_constraintTop_toBottomOf="@id/tvBreathHint"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/btnProceed"
+        app:layout_constraintVertical_bias="0.0">
 
-        <com.google.android.material.textfield.TextInputEditText
-            android:id="@+id/etNote"
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilNote"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:maxLength="200"
-            android:inputType="textMultiLine"
-            android:maxLines="3"
-            android:textSize="14sp" />
+            android:hint="Зачем ты хочешь это открыть?"
+            app:boxBackgroundMode="outline"
+            app:boxBackgroundColor="@android:color/transparent"
+            app:boxCornerRadiusTopStart="16dp"
+            app:boxCornerRadiusTopEnd="16dp"
+            app:boxCornerRadiusBottomStart="16dp"
+            app:boxCornerRadiusBottomEnd="16dp"
+            app:boxStrokeColor="@color/pause_accent"
+            app:hintTextColor="@color/pause_text_secondary"
+            app:counterEnabled="true"
+            app:counterMaxLength="200"
+            app:helperText="Необязательно · сохранится автоматически"
+            app:helperTextEnabled="true">
 
-    </com.google.android.material.textfield.TextInputLayout>
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLength="200"
+                android:inputType="textMultiLine"
+                android:maxLines="3"
+                android:textSize="15sp"
+                android:textColor="@color/pause_text_primary" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+    </LinearLayout>
 
     <!-- Кнопка перехода -->
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnProceed"
         android:layout_width="0dp"
         android:layout_height="56dp"
+        android:layout_marginHorizontal="28dp"
+        android:layout_marginBottom="36dp"
         android:text="Подожди..."
         android:textSize="16sp"
         android:enabled="false"
-        android:layout_marginBottom="32dp"
         app:cornerRadius="16dp"
-        app:backgroundTint="#6B9B8A"
+        app:backgroundTint="@color/pause_accent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />

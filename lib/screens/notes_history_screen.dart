@@ -44,6 +44,9 @@ class _NotesHistoryScreenState extends State<NotesHistoryScreen> {
             child: const Text('Отмена'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Удалить'),
           ),
@@ -62,7 +65,7 @@ class _NotesHistoryScreenState extends State<NotesHistoryScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('История заметок'),
+        title: Text(_notes.isEmpty ? 'История заметок' : 'Заметки (${_notes.length})'),
         actions: [
           if (_notes.isNotEmpty)
             IconButton(
@@ -76,22 +79,33 @@ class _NotesHistoryScreenState extends State<NotesHistoryScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _notes.isEmpty
               ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.note_alt_outlined, size: 64, color: cs.onSurfaceVariant.withValues(alpha: 0.4)),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Заметок пока нет',
-                        style: TextStyle(fontSize: 16, color: cs.onSurfaceVariant),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Они появятся после того, как вы напишете\nчто-нибудь на экране паузы',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
-                      ),
-                    ],
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.note_alt_outlined,
+                          size: 64,
+                          color: cs.onSurfaceVariant.withValues(alpha: 0.4),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Заметок пока нет',
+                          style: TextStyle(fontSize: 16, color: cs.onSurfaceVariant),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Они появятся после того, как вы напишете '
+                          'что-нибудь на экране паузы',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 )
               : ListView.builder(
@@ -122,7 +136,29 @@ class _NotesHistoryScreenState extends State<NotesHistoryScreen> {
         color: cs.error,
         child: Icon(Icons.delete_rounded, color: cs.onError),
       ),
-      onDismissed: (_) => _deleteNote(note.id),
+      confirmDismiss: (_) async {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Удалить заметку?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Отмена'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Удалить'),
+              ),
+            ],
+          ),
+        ) ?? false;
+        if (confirmed) {
+          await _deleteNote(note.id);
+        }
+        return false; // Всегда false — мы обновляем список через _load() внутри _deleteNote
+      },
+      onDismissed: (_) {}, // Не используется, удаление через confirmDismiss
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         title: Text(
