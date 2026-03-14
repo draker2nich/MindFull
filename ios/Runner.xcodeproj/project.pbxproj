@@ -15,6 +15,9 @@
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
+		AA0001012F0000000000000A /* MethodChannelBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0001002F0000000000000A /* MethodChannelBridge.swift */; };
+		AA0001032F0000000000000B /* ScreenTimeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0001022F0000000000000B /* ScreenTimeManager.swift */; };
+		AA0001052F0000000000000C /* SharedConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0001042F0000000000000C /* SharedConstants.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -57,6 +60,9 @@
 		97C146FD1CF9000F007C117D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		97C147001CF9000F007C117D /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AA0001002F0000000000000A /* MethodChannelBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MethodChannelBridge.swift; sourceTree = "<group>"; };
+		AA0001022F0000000000000B /* ScreenTimeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTimeManager.swift; sourceTree = "<group>"; };
+		AA0001042F0000000000000C /* SharedConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SharedConstants.swift; path = Shared/SharedConstants.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -89,6 +95,14 @@
 			name = Flutter;
 			sourceTree = "<group>";
 		};
+		AA0001062F0000000000000D /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				AA0001042F0000000000000C /* SharedConstants.swift */,
+			);
+			name = Shared;
+			sourceTree = "<group>";
+		};
 		97C146E51CF9000F007C117D = {
 			isa = PBXGroup;
 			children = (
@@ -96,6 +110,7 @@
 				97C146F01CF9000F007C117D /* Runner */,
 				97C146EF1CF9000F007C117D /* Products */,
 				331C8082294A63A400263BE5 /* RunnerTests */,
+				AA0001062F0000000000000D /* Shared */,
 			);
 			sourceTree = "<group>";
 		};
@@ -120,6 +135,8 @@
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
+				AA0001002F0000000000000A /* MethodChannelBridge.swift */,
+				AA0001022F0000000000000B /* ScreenTimeManager.swift */,
 			);
 			path = Runner;
 			sourceTree = "<group>";
@@ -274,6 +291,9 @@
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
+				AA0001012F0000000000000A /* MethodChannelBridge.swift in Sources */,
+				AA0001032F0000000000000B /* ScreenTimeManager.swift in Sources */,
+				AA0001052F0000000000000C /* SharedConstants.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -350,7 +370,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = iphoneos;
@@ -476,7 +496,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
@@ -527,7 +547,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = iphoneos;
