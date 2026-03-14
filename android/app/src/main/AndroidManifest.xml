@@ -1,26 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Мониторинг foreground-приложений -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
-
-    <!-- Overlay поверх других приложений -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-
-    <!-- Foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-
-    <!-- Notification для foreground service -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- Перезапуск сервиса после reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-
-    <!-- Запрос исключения из battery optimization (показываем диалог) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
@@ -28,7 +16,6 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
-        <!-- Main Flutter Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -47,17 +34,16 @@
             </intent-filter>
         </activity>
 
-        <!-- Pause Activity — показывается поверх целевого приложения -->
+        <!-- PauseActivity — programmatic UI, uses PauseTheme -->
         <activity
             android:name=".PauseActivity"
             android:exported="false"
-            android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
+            android:theme="@style/PauseTheme"
             android:launchMode="singleTop"
             android:excludeFromRecents="true"
             android:taskAffinity="com.example.mindfull.pause"
             android:configChanges="orientation|screenSize|keyboardHidden" />
 
-        <!-- Foreground Service для мониторинга -->
         <service
             android:name=".AppMonitorService"
             android:enabled="true"
@@ -68,7 +54,6 @@
                 android:value="App launch interception for mindful pause timer. Monitors foreground app changes to display a 60-second breathing exercise before opening distracting apps selected by the user." />
         </service>
 
-        <!-- Boot Receiver — перезапуск сервиса после reboot -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
@@ -89,7 +74,6 @@
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
         </intent>
-        <!-- Для получения списка установленных приложений -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />

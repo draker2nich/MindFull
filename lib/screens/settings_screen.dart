@@ -19,11 +19,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   bool _overlayGranted = false;
   bool _batteryExempt = false;
   int _monitoredCount = 0;
-  int _cooldownMinutes = 5;
-  bool _cooldownEnabled = true;
   bool _loading = true;
 
-  static const _cooldownOptions = [1, 3, 5, 10, 15, 30, 60];
   static const _privacyPolicyUrl = 'https://example.com/privacy';
 
   @override
@@ -49,8 +46,6 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     final perms = await PlatformChannel.checkAllPermissions();
     final prefs = await SharedPreferences.getInstance();
     final monitored = prefs.getStringList('monitored_packages') ?? [];
-    final cooldown = await PlatformChannel.getCooldownMinutes();
-    final cooldownEnabled = await PlatformChannel.isCooldownEnabled();
     if (!mounted) return;
     setState(() {
       _serviceRunning = running;
@@ -58,8 +53,6 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       _overlayGranted = perms.overlay;
       _batteryExempt = perms.battery;
       _monitoredCount = monitored.length;
-      _cooldownMinutes = cooldown;
-      _cooldownEnabled = cooldownEnabled;
       _loading = false;
     });
   }
@@ -84,27 +77,14 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     }
   }
 
-  Future<void> _setCooldown(int minutes) async {
-    await PlatformChannel.setCooldownMinutes(minutes);
-    setState(() => _cooldownMinutes = minutes);
-  }
-
-  Future<void> _toggleCooldownEnabled(bool enabled) async {
-    await PlatformChannel.setCooldownEnabled(enabled);
-    setState(() => _cooldownEnabled = enabled);
-  }
-
   Future<void> _deleteAllData() async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Удалить все данные?'),
         content: const Text(
-          'Будут удалены:\n'
-          '• Все заметки\n'
-          '• Список контролируемых приложений\n'
-          '• Все настройки\n\n'
-          'Это действие нельзя отменить.',
+          'Будут удалены все заметки, список приложений и настройки. '
+          'Это нельзя отменить.',
         ),
         actions: [
           TextButton(
@@ -125,13 +105,11 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     if (confirm == true) {
       await PlatformChannel.stopMonitorService();
       await NotesRepository.clearAll();
-
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('monitored_packages');
       await PlatformChannel.setCooldownMinutes(5);
       await PlatformChannel.setCooldownEnabled(true);
       await PlatformChannel.updateMonitoredApps([]);
-
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Все данные удалены')),
@@ -150,230 +128,213 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Настройки')),
+      appBar: AppBar(
+        title: const Text('Настройки'),
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.symmetric(vertical: 8),
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
               children: [
-                // ── Основной toggle ──
-                _section(cs, 'Основное'),
-                SwitchListTile(
-                  title: const Text('Защита активна'),
-                  subtitle: Text(
-                    _serviceRunning
-                        ? 'Фоновый сервис работает'
-                        : 'Сервис остановлен',
+                // ── Сервис ──
+                _sectionHeader(cs, 'Основное'),
+                _buildCard(
+                  cs,
+                  isDark,
+                  child: SwitchListTile(
+                    title: const Text('Защита активна'),
+                    subtitle: Text(
+                      _serviceRunning ? 'Фоновый сервис работает' : 'Сервис остановлен',
+                    ),
+                    secondary: Icon(
+                      _serviceRunning ? Icons.shield_rounded : Icons.shield_outlined,
+                      color: _serviceRunning ? cs.primary : cs.onSurfaceVariant,
+                    ),
+                    value: _serviceRunning,
+                    onChanged: (_monitoredCount > 0 && _usageGranted && _overlayGranted)
+                        ? (val) => _toggleService(val)
+                        : null,
                   ),
-                  secondary: Icon(
-                    _serviceRunning ? Icons.shield_rounded : Icons.shield_outlined,
-                    color: _serviceRunning ? cs.primary : cs.onSurfaceVariant,
-                  ),
-                  value: _serviceRunning,
-                  onChanged: (_monitoredCount > 0 && _usageGranted && _overlayGranted)
-                      ? (val) => _toggleService(val)
-                      : null,
                 ),
 
-                if (!_usageGranted || !_overlayGranted)
+                if (!_usageGranted || !_overlayGranted) ...[
+                  const SizedBox(height: 8),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Card(
-                      color: cs.errorContainer,
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          children: [
-                            Icon(Icons.warning_amber_rounded, color: cs.error, size: 20),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                'Не все разрешения выданы. Сервис не может работать.',
-                                style: TextStyle(fontSize: 13, color: cs.onErrorContainer),
-                              ),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: cs.error.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.warning_amber_rounded, color: cs.error, size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Не все разрешения выданы',
+                              style: TextStyle(fontSize: 13, color: cs.error),
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
+                ],
 
-                const Divider(height: 32),
+                const SizedBox(height: 20),
 
                 // ── Приложения ──
-                _section(cs, 'Приложения'),
-                ListTile(
-                  leading: Icon(Icons.apps_rounded, color: cs.primary),
-                  title: const Text('Контролируемые приложения'),
-                  subtitle: Text('Выбрано: $_monitoredCount'),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const AppSelectionScreen()),
-                    );
-                    _refresh();
-                  },
+                _sectionHeader(cs, 'Приложения'),
+                _buildCard(
+                  cs,
+                  isDark,
+                  child: ListTile(
+                    leading: Icon(Icons.apps_rounded, color: cs.primary),
+                    title: const Text('Контролируемые приложения'),
+                    subtitle: Text('Выбрано: $_monitoredCount'),
+                    trailing: const Icon(Icons.chevron_right_rounded, size: 20),
+                    onTap: () async {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const AppSelectionScreen()),
+                      );
+                      _refresh();
+                    },
+                  ),
                 ),
 
-                const Divider(height: 32),
-
-                // ── Пауза ──
-                _section(cs, 'Пауза'),
-
-                // Вкл/Выкл cooldown
-                SwitchListTile(
-                  title: const Text('Cooldown между паузами'),
-                  subtitle: Text(
-                    _cooldownEnabled
-                        ? 'После подтверждения — перерыв ${_cooldownLabel(_cooldownMinutes)}'
-                        : 'Пауза при каждом входе в приложение',
-                  ),
-                  secondary: Icon(
-                    Icons.snooze_rounded,
-                    color: _cooldownEnabled ? cs.primary : cs.onSurfaceVariant,
-                  ),
-                  value: _cooldownEnabled,
-                  onChanged: (val) => _toggleCooldownEnabled(val),
-                ),
-
-                // Выбор времени cooldown (доступен только при включённом cooldown)
-                if (_cooldownEnabled)
-                  ListTile(
-                    leading: Icon(Icons.timer_rounded, color: cs.primary),
-                    title: const Text('Время cooldown'),
-                    subtitle: Text(_cooldownLabel(_cooldownMinutes)),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: () => _showCooldownPicker(cs),
-                  ),
-
-                const Divider(height: 32),
+                const SizedBox(height: 20),
 
                 // ── Разрешения ──
-                _section(cs, 'Разрешения'),
-                _permissionTile(
+                _sectionHeader(cs, 'Разрешения'),
+                _buildCard(
                   cs,
-                  title: 'Доступ к использованию',
-                  granted: _usageGranted,
-                  onTap: () async {
-                    await PlatformChannel.requestUsageAccess();
-                  },
-                ),
-                _permissionTile(
-                  cs,
-                  title: 'Наложение поверх приложений',
-                  granted: _overlayGranted,
-                  onTap: () async {
-                    await PlatformChannel.requestOverlayPermission();
-                  },
-                ),
-                _permissionTile(
-                  cs,
-                  title: 'Оптимизация батареи отключена',
-                  granted: _batteryExempt,
-                  onTap: () async {
-                    await PlatformChannel.requestBatteryOptimizationExemption();
-                  },
+                  isDark,
+                  child: Column(
+                    children: [
+                      _permissionTile(
+                        cs,
+                        title: 'Доступ к использованию',
+                        granted: _usageGranted,
+                        onTap: () => PlatformChannel.requestUsageAccess(),
+                      ),
+                      Divider(height: 1, indent: 56, color: cs.outlineVariant.withValues(alpha: 0.3)),
+                      _permissionTile(
+                        cs,
+                        title: 'Наложение поверх приложений',
+                        granted: _overlayGranted,
+                        onTap: () => PlatformChannel.requestOverlayPermission(),
+                      ),
+                      Divider(height: 1, indent: 56, color: cs.outlineVariant.withValues(alpha: 0.3)),
+                      _permissionTile(
+                        cs,
+                        title: 'Оптимизация батареи',
+                        granted: _batteryExempt,
+                        onTap: () => PlatformChannel.requestBatteryOptimizationExemption(),
+                      ),
+                    ],
+                  ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: TextButton.icon(
                     onPressed: _refresh,
                     icon: const Icon(Icons.refresh_rounded, size: 18),
-                    label: const Text('Обновить статус разрешений'),
+                    label: const Text('Обновить статус'),
                   ),
                 ),
 
-                const Divider(height: 32),
+                const SizedBox(height: 20),
 
                 // ── Данные ──
-                _section(cs, 'Данные'),
-                ListTile(
-                  leading: Icon(Icons.delete_forever_rounded, color: cs.error),
-                  title: const Text('Удалить все данные'),
-                  subtitle: const Text('Заметки, настройки, список приложений'),
-                  onTap: _deleteAllData,
+                _sectionHeader(cs, 'Данные и конфиденциальность'),
+                _buildCard(
+                  cs,
+                  isDark,
+                  child: Column(
+                    children: [
+                      ListTile(
+                        leading: Icon(Icons.delete_forever_rounded, color: cs.error),
+                        title: const Text('Удалить все данные'),
+                        subtitle: const Text('Заметки, настройки, список'),
+                        onTap: _deleteAllData,
+                      ),
+                      Divider(height: 1, indent: 56, color: cs.outlineVariant.withValues(alpha: 0.3)),
+                      ListTile(
+                        leading: Icon(Icons.privacy_tip_outlined, color: cs.onSurfaceVariant),
+                        title: const Text('Политика конфиденциальности'),
+                        trailing: const Icon(Icons.open_in_new_rounded, size: 18),
+                        onTap: _openPrivacyPolicy,
+                      ),
+                    ],
+                  ),
                 ),
 
-                const Divider(height: 32),
+                const SizedBox(height: 20),
 
                 // ── О приложении ──
-                _section(cs, 'О приложении'),
-                ListTile(
-                  leading: Icon(Icons.info_outline_rounded, color: cs.onSurfaceVariant),
-                  title: const Text('Mindful Pause'),
-                  subtitle: const Text('Версия 1.0.0'),
-                ),
-                ListTile(
-                  leading: Icon(Icons.privacy_tip_outlined, color: cs.onSurfaceVariant),
-                  title: const Text('Политика конфиденциальности'),
-                  trailing: const Icon(Icons.open_in_new_rounded, size: 18),
-                  onTap: _openPrivacyPolicy,
-                ),
-                ListTile(
-                  leading: Icon(Icons.replay_rounded, color: cs.onSurfaceVariant),
-                  title: const Text('Показать онбординг'),
-                  subtitle: const Text('Запустить приветственный экран заново'),
-                  onTap: () => _resetOnboarding(context),
+                _sectionHeader(cs, 'О приложении'),
+                _buildCard(
+                  cs,
+                  isDark,
+                  child: Column(
+                    children: [
+                      ListTile(
+                        leading: Icon(Icons.info_outline_rounded, color: cs.onSurfaceVariant),
+                        title: const Text('Mindful Pause'),
+                        subtitle: const Text('Версия 1.0.0'),
+                      ),
+                      Divider(height: 1, indent: 56, color: cs.outlineVariant.withValues(alpha: 0.3)),
+                      ListTile(
+                        leading: Icon(Icons.replay_rounded, color: cs.onSurfaceVariant),
+                        title: const Text('Показать онбординг'),
+                        onTap: () => _resetOnboarding(context),
+                      ),
+                    ],
+                  ),
                 ),
 
-                const SizedBox(height: 32),
+                const SizedBox(height: 40),
               ],
             ),
     );
   }
 
-  void _showCooldownPicker(ColorScheme cs) {
-    showModalBottomSheet(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'После подтверждения паузы повторная пауза не сработает '
-                'в течение выбранного времени для того же приложения.',
-                style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
-              ),
-            ),
-            ..._cooldownOptions.map((minutes) => RadioListTile<int>(
-              title: Text(_cooldownLabel(minutes)),
-              value: minutes,
-              groupValue: _cooldownMinutes,
-              onChanged: (v) {
-                if (v != null) {
-                  _setCooldown(v);
-                  Navigator.of(ctx).pop();
-                }
-              },
-            )),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _cooldownLabel(int minutes) {
-    if (minutes == 1) return '1 минута';
-    if (minutes < 5) return '$minutes минуты';
-    if (minutes == 60) return '1 час';
-    return '$minutes минут';
-  }
-
-  Widget _section(ColorScheme cs, String title) {
+  Widget _sectionHeader(ColorScheme cs, String title) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
       child: Text(
         title,
         style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
           color: cs.primary,
+          letterSpacing: 0.3,
         ),
+      ),
+    );
+  }
+
+  Widget _buildCard(ColorScheme cs, bool isDark, {required Widget child}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Container(
+        decoration: BoxDecoration(
+          color: isDark
+              ? cs.surfaceContainerHighest.withValues(alpha: 0.4)
+              : cs.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: cs.outlineVariant.withValues(alpha: 0.15),
+            width: 1,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: child,
       ),
     );
   }
@@ -388,9 +349,13 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       leading: Icon(
         granted ? Icons.check_circle_rounded : Icons.error_outline_rounded,
         color: granted ? cs.primary : cs.error,
+        size: 22,
       ),
-      title: Text(title),
-      subtitle: Text(granted ? 'Выдано' : 'Не выдано'),
+      title: Text(title, style: const TextStyle(fontSize: 15)),
+      subtitle: Text(
+        granted ? 'Выдано' : 'Не выдано',
+        style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+      ),
       trailing: granted
           ? null
           : TextButton(
@@ -405,7 +370,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Сбросить онбординг?'),
-        content: const Text('Вы увидите приветственный экран при следующем запуске.'),
+        content: const Text('Вы увидите приветственный экран.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),

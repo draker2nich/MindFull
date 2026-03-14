@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mindfull/services/platform_channel.dart';
 
@@ -12,6 +13,7 @@ class AppSelectionScreen extends StatefulWidget {
 class _AppSelectionScreenState extends State<AppSelectionScreen> {
   List<AppInfo> _allApps = [];
   Set<String> _selected = {};
+  Set<String> _initialSelected = {};
   bool _loading = true;
   String _search = '';
   String? _error;
@@ -32,6 +34,7 @@ class _AppSelectionScreenState extends State<AppSelectionScreen> {
       setState(() {
         _allApps = apps;
         _selected = saved.toSet();
+        _initialSelected = saved.toSet();
         _loading = false;
         _error = null;
       });
@@ -44,21 +47,34 @@ class _AppSelectionScreenState extends State<AppSelectionScreen> {
     }
   }
 
-  Future<void> _save() async {
+  bool get _hasChanges {
+    return !_setEquals(_selected, _initialSelected);
+  }
+
+  bool _setEquals(Set<String> a, Set<String> b) {
+    if (a.length != b.length) return false;
+    return a.containsAll(b);
+  }
+
+  Future<void> _saveAndGoBack() async {
     final prefs = await SharedPreferences.getInstance();
     final list = _selected.toList();
     await prefs.setStringList('monitored_packages', list);
 
-    // Обновляем сервис в реальном времени если он запущен
+    // Обновляем сервис
     try {
       final running = await PlatformChannel.isServiceRunning();
       if (running) {
         await PlatformChannel.updateMonitoredApps(list);
       }
     } catch (_) {}
+
+    if (!mounted) return;
+    Navigator.of(context).pop();
   }
 
   void _toggle(String packageName) {
+    HapticFeedback.selectionClick();
     setState(() {
       if (_selected.contains(packageName)) {
         _selected.remove(packageName);
@@ -66,7 +82,6 @@ class _AppSelectionScreenState extends State<AppSelectionScreen> {
         _selected.add(packageName);
       }
     });
-    _save();
   }
 
   List<AppInfo> get _filtered {
@@ -81,10 +96,15 @@ class _AppSelectionScreenState extends State<AppSelectionScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Выбор приложений'),
+        leading: IconButton(
+          icon: const Icon(Icons.close_rounded),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(56),
           child: Padding(
@@ -107,32 +127,63 @@ class _AppSelectionScreenState extends State<AppSelectionScreen> {
         ),
       ),
       body: _buildBody(cs),
-      bottomNavigationBar: _selected.isNotEmpty
-          ? Container(
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-              decoration: BoxDecoration(
-                color: cs.surface,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.08),
-                    blurRadius: 8,
-                    offset: const Offset(0, -2),
-                  ),
-                ],
-              ),
-              child: SafeArea(
+      bottomNavigationBar: _buildBottomBar(cs, isDark),
+    );
+  }
+
+  Widget _buildBottomBar(ColorScheme cs, bool isDark) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+      decoration: BoxDecoration(
+        color: isDark ? cs.surface : cs.surface,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Счётчик
+            if (_selected.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
                 child: Text(
-                  'Отслеживается: ${_selected.length}',
-                  textAlign: TextAlign.center,
+                  'Выбрано: ${_selected.length}',
                   style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: cs.primary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: cs.onSurfaceVariant,
                   ),
                 ),
               ),
-            )
-          : null,
+
+            // Кнопка сохранить
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: FilledButton(
+                onPressed: _saveAndGoBack,
+                style: FilledButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: Text(
+                  _selected.isEmpty
+                      ? 'Сохранить без приложений'
+                      : 'Сохранить (${_selected.length})',
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -184,6 +235,8 @@ class _AppSelectionScreenState extends State<AppSelectionScreen> {
         ] else ...[
           ...apps.map((a) => _appTile(a, cs, _selected.contains(a.packageName))),
         ],
+        // Отступ чтобы контент не скрывался под bottom bar
+        const SizedBox(height: 80),
       ],
     );
   }
@@ -230,10 +283,21 @@ class _AppSelectionScreenState extends State<AppSelectionScreen> {
         overflow: TextOverflow.ellipsis,
         style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant),
       ),
-      trailing: Checkbox(
-        value: selected,
-        onChanged: (_) => _toggle(app.packageName),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      trailing: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          color: selected ? cs.primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? cs.primary : cs.outlineVariant,
+            width: selected ? 0 : 2,
+          ),
+        ),
+        child: selected
+            ? Icon(Icons.check_rounded, size: 18, color: cs.onPrimary)
+            : null,
       ),
       onTap: () => _toggle(app.packageName),
     );
