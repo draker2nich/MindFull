@@ -205,7 +205,6 @@ final class MethodChannelBridge {
         
         if let sheet = hostingController.sheetPresentationController {
             sheet.detents = [.large()]
-            sheet.prefersGrabberIndicator = true
         }
         
         controller.present(hostingController, animated: true)
