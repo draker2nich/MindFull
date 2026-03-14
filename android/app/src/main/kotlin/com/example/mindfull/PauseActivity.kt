@@ -9,7 +9,6 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.RectF
 import android.os.Bundle
@@ -18,7 +17,6 @@ import android.text.InputType
 import android.util.Log
 import android.view.Gravity
 import android.view.View
-import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.OvershootInterpolator
@@ -29,6 +27,8 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
+import java.util.Locale
+import kotlin.math.min
 
 class PauseActivity : AppCompatActivity() {
 
@@ -74,6 +74,24 @@ class PauseActivity : AppCompatActivity() {
     private var textPrimary = 0
     private var textSecondary = 0
 
+    // Localization
+    private val isRussian: Boolean
+        get() = Locale.getDefault().language == "ru"
+
+    private fun str(ruText: String, enText: String): String =
+        if (isRussian) ruText else enText
+
+    // Responsive sizing
+    private val d: Float get() = resources.displayMetrics.density
+    private val screenW: Int get() = resources.displayMetrics.widthPixels
+    private val screenH: Int get() = resources.displayMetrics.heightPixels
+    private val shortSide: Int get() = min(screenW, screenH)
+    private val isSmallScreen: Boolean get() = shortSide < (360 * d).toInt()
+    private val scaleFactor: Float get() = (shortSide / (390f * d)).coerceIn(0.8f, 1.4f)
+
+    private fun dp(value: Float): Int = (value * d * scaleFactor).toInt()
+    private fun sp(value: Float): Float = value * scaleFactor
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.apply {
@@ -114,15 +132,15 @@ class PauseActivity : AppCompatActivity() {
         noteSaved = false
 
         targetPackage = intent.getStringExtra(EXTRA_TARGET_PACKAGE) ?: ""
-        appName = intent.getStringExtra(EXTRA_APP_NAME) ?: "приложение"
+        appName = intent.getStringExtra(EXTRA_APP_NAME) ?: str("приложение", "app")
         Log.d(TAG, "initSession for: $targetPackage ($appName)")
 
-        tvSubtitle.text = "перед открытием $appName"
+        tvSubtitle.text = str("перед открытием $appName", "before opening $appName")
         etNote.setText("")
         tvTimer.text = (TIMER_DURATION_MS / 1000).toString()
-        tvBreathHint.text = "Вдох..."
+        tvBreathHint.text = str("Вдох...", "Inhale...")
 
-        btnProceed.text = "Подожди..."
+        btnProceed.text = str("Подожди...", "Wait...")
         btnProceed.isEnabled = false
         btnProceed.alpha = 0.4f
 
@@ -143,13 +161,9 @@ class PauseActivity : AppCompatActivity() {
     }
 
     // ══════════════════════════════════════════════════════════
-    //  CUSTOM VIEWS — гарантированно круглые
+    //  CUSTOM VIEWS
     // ══════════════════════════════════════════════════════════
 
-    /**
-     * Простая View которая рисует залитый круг через Canvas.
-     * Никаких drawable, никаких GradientDrawable — просто circle paint.
-     */
     class CircleView(context: Context, private val circleColor: Int) : View(context) {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = circleColor
@@ -203,11 +217,10 @@ class PauseActivity : AppCompatActivity() {
     }
 
     // ══════════════════════════════════════════════════════════
-    //  BUILD UI
+    //  BUILD UI — responsive
     // ══════════════════════════════════════════════════════════
 
     private fun buildUI() {
-        val d = resources.displayMetrics.density
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                 Configuration.UI_MODE_NIGHT_YES
 
@@ -230,13 +243,13 @@ class PauseActivity : AppCompatActivity() {
         ))
 
         // Top spacer
-        content.addView(View(this), lp(0, (56 * d).toInt()))
+        content.addView(View(this), lp(0, dp(if (isSmallScreen) 32f else 56f)))
 
         // Title
         tvTitle = TextView(this).apply {
-            text = "Сделай паузу"
+            text = str("Сделай паузу", "Take a pause")
             setTextColor(textPrimary)
-            textSize = 26f
+            textSize = sp(if (isSmallScreen) 22f else 26f)
             typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
             gravity = Gravity.CENTER
             letterSpacing = -0.03f
@@ -245,20 +258,21 @@ class PauseActivity : AppCompatActivity() {
 
         // Subtitle
         tvSubtitle = TextView(this).apply {
-            text = "дыши и подумай"
+            text = str("дыши и подумай", "breathe and think")
             setTextColor(textSecondary)
-            textSize = 14f
+            textSize = sp(14f)
             gravity = Gravity.CENTER
-            setPadding(0, (4 * d).toInt(), 0, 0)
+            setPadding(0, dp(4f), 0, 0)
         }
         content.addView(tvSubtitle, wrapCenter())
 
         // Flex spacer
         content.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
 
-        // ── Breath area ──
-        // Размер контейнера = outer circle * max scale (1.3) + запас
-        val areaSize = (320 * d).toInt()
+        // ── Breath area — adaptive size ──
+        val baseCircleSize = if (isSmallScreen) 180f else 240f
+        val areaSize = dp(baseCircleSize * 1.35f)
+
         val area = FrameLayout(this).apply {
             clipChildren = false
             clipToPadding = false
@@ -267,23 +281,23 @@ class PauseActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_HORIZONTAL
         })
 
-        // Outer circle — 240dp, самый бледный
-        val outerSz = (240 * d).toInt()
+        // Outer circle
+        val outerSz = dp(baseCircleSize)
         breathCircleOuter = CircleView(this, accentColor).apply { alpha = 0.2f }
         area.addView(breathCircleOuter, FrameLayout.LayoutParams(outerSz, outerSz, Gravity.CENTER))
 
-        // Middle circle — 190dp
-        val midSz = (190 * d).toInt()
+        // Middle circle
+        val midSz = dp(baseCircleSize * 0.79f)
         breathCircleMiddle = CircleView(this, accentColor).apply { alpha = 0.35f }
         area.addView(breathCircleMiddle, FrameLayout.LayoutParams(midSz, midSz, Gravity.CENTER))
 
-        // Inner circle — 150dp
-        val innerSz = (150 * d).toInt()
+        // Inner circle
+        val innerSz = dp(baseCircleSize * 0.625f)
         breathCircleInner = CircleView(this, accentColor).apply { alpha = 0.7f }
         area.addView(breathCircleInner, FrameLayout.LayoutParams(innerSz, innerSz, Gravity.CENTER))
 
-        // Progress ring — 160dp
-        val ringSz = (160 * d).toInt()
+        // Progress ring
+        val ringSz = dp(baseCircleSize * 0.667f)
         progressView = CircularProgressView(this, accentColor, 3 * d)
         area.addView(progressView, FrameLayout.LayoutParams(ringSz, ringSz, Gravity.CENTER))
 
@@ -291,7 +305,7 @@ class PauseActivity : AppCompatActivity() {
         tvTimer = TextView(this).apply {
             text = "60"
             setTextColor(textPrimary)
-            textSize = 44f
+            textSize = sp(if (isSmallScreen) 36f else 44f)
             typeface = android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL)
             gravity = Gravity.CENTER
         }
@@ -303,12 +317,12 @@ class PauseActivity : AppCompatActivity() {
 
         // Breath hint
         tvBreathHint = TextView(this).apply {
-            text = "Вдох..."
+            text = str("Вдох...", "Inhale...")
             setTextColor(accentColor)
-            textSize = 16f
+            textSize = sp(16f)
             typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
             gravity = Gravity.CENTER
-            setPadding(0, (20 * d).toInt(), 0, 0)
+            setPadding(0, dp(20f), 0, 0)
         }
         content.addView(tvBreathHint, wrapCenter())
 
@@ -318,13 +332,14 @@ class PauseActivity : AppCompatActivity() {
         // ── Note input ──
         val accentCSL = android.content.res.ColorStateList.valueOf(accentColor)
         val hintCSL = android.content.res.ColorStateList.valueOf(textSecondary)
+        val cornerR = dp(16f).toFloat()
 
         tilNote = TextInputLayout(this, null,
             com.google.android.material.R.attr.textInputOutlinedStyle
         ).apply {
-            hint = "Зачем ты хочешь это открыть?"
+            hint = str("Зачем ты хочешь это открыть?", "Why do you want to open this?")
             boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
-            setBoxCornerRadii(16 * d, 16 * d, 16 * d, 16 * d)
+            setBoxCornerRadii(cornerR, cornerR, cornerR, cornerR)
             isCounterEnabled = true
             counterMaxLength = 200
             boxBackgroundColor = Color.TRANSPARENT
@@ -336,7 +351,7 @@ class PauseActivity : AppCompatActivity() {
         }
         etNote = TextInputEditText(tilNote.context).apply {
             maxLines = 2
-            textSize = 14f
+            textSize = sp(14f)
             setTextColor(textPrimary)
             setHintTextColor(textSecondary)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
@@ -345,40 +360,42 @@ class PauseActivity : AppCompatActivity() {
             }
         }
         tilNote.addView(etNote)
+
+        val hPad = dp(24f)
         content.addView(tilNote, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply {
-            marginStart = (24 * d).toInt()
-            marginEnd = (24 * d).toInt()
+            marginStart = hPad
+            marginEnd = hPad
         })
 
         // Spacer
-        content.addView(View(this), lp(0, (16 * d).toInt()))
+        content.addView(View(this), lp(0, dp(16f)))
 
         // ── Button ──
         val btnTextColor = if (isDark) Color.parseColor("#0A0F0F") else Color.WHITE
         btnProceed = MaterialButton(this, null,
             com.google.android.material.R.attr.materialButtonStyle
         ).apply {
-            text = "Подожди..."
+            text = str("Подожди...", "Wait...")
             isEnabled = false
             alpha = 0.4f
-            cornerRadius = (16 * d).toInt()
-            textSize = 15f
+            cornerRadius = dp(16f)
+            textSize = sp(15f)
             isAllCaps = false
             typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
             setBackgroundColor(accentColor)
             setTextColor(btnTextColor)
-            setPadding(0, (14 * d).toInt(), 0, (14 * d).toInt())
+            setPadding(0, dp(14f), 0, dp(14f))
             setOnClickListener { onProceedClicked() }
         }
         content.addView(btnProceed, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, (56 * d).toInt()
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(56f)
         ).apply {
-            marginStart = (24 * d).toInt()
-            marginEnd = (24 * d).toInt()
-            bottomMargin = (36 * d).toInt()
+            marginStart = hPad
+            marginEnd = hPad
+            bottomMargin = dp(36f)
         })
 
         setContentView(root)
@@ -453,7 +470,7 @@ class PauseActivity : AppCompatActivity() {
 
     private fun activateButton() {
         btnProceed.isEnabled = true
-        btnProceed.text = "Открыть $appName"
+        btnProceed.text = str("Открыть $appName", "Open $appName")
         btnProceed.animate().alpha(1f).setDuration(500)
             .setInterpolator(OvershootInterpolator(1.2f)).start()
     }
@@ -467,7 +484,6 @@ class PauseActivity : AppCompatActivity() {
     private fun runBreathCycle() {
         val i = AccelerateDecelerateInterpolator()
 
-        // Outer
         val ioX = ObjectAnimator.ofFloat(breathCircleOuter, "scaleX", 1f, 1.3f).apply { duration = INHALE_MS; interpolator = i }
         val ioY = ObjectAnimator.ofFloat(breathCircleOuter, "scaleY", 1f, 1.3f).apply { duration = INHALE_MS; interpolator = i }
         val ioA = ObjectAnimator.ofFloat(breathCircleOuter, "alpha", 0.2f, 0.45f).apply { duration = INHALE_MS }
@@ -475,7 +491,6 @@ class PauseActivity : AppCompatActivity() {
         val eoY = ObjectAnimator.ofFloat(breathCircleOuter, "scaleY", 1.3f, 1f).apply { duration = EXHALE_MS; interpolator = i }
         val eoA = ObjectAnimator.ofFloat(breathCircleOuter, "alpha", 0.45f, 0.2f).apply { duration = EXHALE_MS }
 
-        // Middle
         val imX = ObjectAnimator.ofFloat(breathCircleMiddle, "scaleX", 1f, 1.2f).apply { duration = INHALE_MS; interpolator = i }
         val imY = ObjectAnimator.ofFloat(breathCircleMiddle, "scaleY", 1f, 1.2f).apply { duration = INHALE_MS; interpolator = i }
         val imA = ObjectAnimator.ofFloat(breathCircleMiddle, "alpha", 0.35f, 0.6f).apply { duration = INHALE_MS }
@@ -483,7 +498,6 @@ class PauseActivity : AppCompatActivity() {
         val emY = ObjectAnimator.ofFloat(breathCircleMiddle, "scaleY", 1.2f, 1f).apply { duration = EXHALE_MS; interpolator = i }
         val emA = ObjectAnimator.ofFloat(breathCircleMiddle, "alpha", 0.6f, 0.35f).apply { duration = EXHALE_MS }
 
-        // Inner
         val iiX = ObjectAnimator.ofFloat(breathCircleInner, "scaleX", 1f, 1.12f).apply { duration = INHALE_MS; interpolator = i }
         val iiY = ObjectAnimator.ofFloat(breathCircleInner, "scaleY", 1f, 1.12f).apply { duration = INHALE_MS; interpolator = i }
         val iiA = ObjectAnimator.ofFloat(breathCircleInner, "alpha", 0.7f, 0.9f).apply { duration = INHALE_MS }
@@ -493,9 +507,13 @@ class PauseActivity : AppCompatActivity() {
 
         val hold = ValueAnimator.ofFloat(0f, 1f).apply { duration = HOLD_MS }
 
-        ioX.addUpdateListener { if (it.animatedFraction < 0.05f) tvBreathHint.text = "Вдох..." }
-        hold.addUpdateListener { if (it.animatedFraction < 0.05f) tvBreathHint.text = "Задержка..." }
-        eoX.addUpdateListener { if (it.animatedFraction < 0.05f) tvBreathHint.text = "Выдох..." }
+        val inhaleText = str("Вдох...", "Inhale...")
+        val holdText = str("Задержка...", "Hold...")
+        val exhaleText = str("Выдох...", "Exhale...")
+
+        ioX.addUpdateListener { if (it.animatedFraction < 0.05f) tvBreathHint.text = inhaleText }
+        hold.addUpdateListener { if (it.animatedFraction < 0.05f) tvBreathHint.text = holdText }
+        eoX.addUpdateListener { if (it.animatedFraction < 0.05f) tvBreathHint.text = exhaleText }
 
         val inhale = AnimatorSet().apply {
             playTogether(ioX, ioY, ioA, imX, imY, imA, iiX, iiY, iiA)

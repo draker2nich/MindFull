@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mindfull/l10n/app_localizations.dart';
+import 'package:mindfull/utils/responsive.dart';
 import 'package:mindfull/services/platform_channel.dart';
 import 'package:mindfull/screens/home_screen.dart';
 import 'package:mindfull/screens/app_selection_screen.dart';
@@ -40,9 +42,21 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('onboarding_done', true);
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
+
+    // Replace the entire stack with HomeScreen, then push AppSelectionScreen
+    // on top. When AppSelectionScreen pops, HomeScreen will be shown.
+    // We use pushAndRemoveUntil to get a clean stack, then immediately
+    // push AppSelectionScreen. HomeScreen will call _refresh() on resume
+    // via the navigatorObserver pattern below.
+    await Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const HomeScreen()),
+      (_) => false,
     );
+
+    // At this point the HomeScreen is mounted.
+    // We push AppSelectionScreen. When user saves and pops,
+    // HomeScreen._didPopFromAppSelection() triggers refresh.
+    if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const AppSelectionScreen()),
     );
@@ -60,136 +74,137 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final r = Responsive(context);
 
     return Scaffold(
       body: SafeArea(
-        child: Column(
-          children: [
-            // Индикатор страниц
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(_totalPages, (i) {
-                  final active = i == _page;
-                  return AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: active ? 28 : 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: active ? cs.primary : cs.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  );
-                }),
-              ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: r.maxContentWidth),
+            child: Column(
+              children: [
+                Padding(
+                  padding: EdgeInsets.symmetric(vertical: r.dp(16)),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(_totalPages, (i) {
+                      final active = i == _page;
+                      return AnimatedContainer(
+                        duration: const Duration(milliseconds: 250),
+                        margin: const EdgeInsets.symmetric(horizontal: 4),
+                        width: active ? 28 : 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: active
+                              ? cs.primary
+                              : cs.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      );
+                    }),
+                  ),
+                ),
+                Expanded(
+                  child: PageView(
+                    controller: _controller,
+                    onPageChanged: (i) {
+                      setState(() => _page = i);
+                      if (i >= 2) _refreshPermissions();
+                    },
+                    physics: const NeverScrollableScrollPhysics(),
+                    children: [
+                      _buildWelcomePage(cs, r),
+                      _buildHowItWorksPage(cs, r),
+                      _buildPermissionsPage(cs, r),
+                      _buildBatteryPage(cs, r),
+                    ],
+                  ),
+                ),
+              ],
             ),
-
-            // Страницы
-            Expanded(
-              child: PageView(
-                controller: _controller,
-                onPageChanged: (i) {
-                  setState(() => _page = i);
-                  if (i >= 2) _refreshPermissions();
-                },
-                physics: const NeverScrollableScrollPhysics(),
-                children: [
-                  _buildWelcomePage(cs),
-                  _buildHowItWorksPage(cs),
-                  _buildPermissionsPage(cs),
-                  _buildBatteryPage(cs),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  // ── Страница 1: Приветствие ──
-
-  Widget _buildWelcomePage(ColorScheme cs) {
+  Widget _buildWelcomePage(ColorScheme cs, Responsive r) {
+    final l = AppLocalizations.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
+      padding: EdgeInsets.symmetric(horizontal: r.horizontalPadding + 12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.self_improvement_rounded, size: 96, color: cs.primary),
-          const SizedBox(height: 32),
+          Icon(Icons.self_improvement_rounded,
+              size: r.dp(96), color: cs.primary),
+          SizedBox(height: r.dp(32)),
           Text(
-            'Mindful Pause',
+            l.t('onboardingTitle'),
             style: TextStyle(
-              fontSize: 28,
+              fontSize: r.sp(28),
               fontWeight: FontWeight.bold,
               color: cs.onSurface,
             ),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: r.dp(16)),
           Text(
-            'Осознанная пауза перед отвлекающими приложениями.\n'
-            'Не блокирует — мягко возвращает внимание.',
+            l.t('onboardingDesc'),
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16, color: cs.onSurfaceVariant),
+            style: TextStyle(fontSize: r.sp(16), color: cs.onSurfaceVariant),
           ),
-          const SizedBox(height: 48),
-          FilledButton(
-            onPressed: _nextPage,
-            child: const Text('Далее'),
-          ),
+          SizedBox(height: r.dp(48)),
+          FilledButton(onPressed: _nextPage, child: Text(l.t('next'))),
         ],
       ),
     );
   }
 
-  // ── Страница 2: Как это работает ──
-
-  Widget _buildHowItWorksPage(ColorScheme cs) {
+  Widget _buildHowItWorksPage(ColorScheme cs, Responsive r) {
+    final l = AppLocalizations.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
+      padding: EdgeInsets.symmetric(horizontal: r.horizontalPadding + 12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          _step(cs, Icons.touch_app_rounded, 'Выберите приложения',
-              'Укажите, перед какими приложениями показывать паузу'),
-          const SizedBox(height: 24),
-          _step(cs, Icons.timer_rounded, '60 секунд паузы',
-              'Дыхательная анимация и время подумать'),
-          const SizedBox(height: 24),
-          _step(cs, Icons.arrow_forward_rounded, 'Продолжайте',
-              'После паузы — свободный переход в приложение'),
-          const SizedBox(height: 48),
+          _step(cs, r, Icons.touch_app_rounded, l.t('selectApps'),
+              l.t('selectAppsDesc')),
+          SizedBox(height: r.dp(24)),
+          _step(cs, r, Icons.timer_rounded, l.t('pauseDuration'),
+              l.t('pauseDurationDesc')),
+          SizedBox(height: r.dp(24)),
+          _step(cs, r, Icons.arrow_forward_rounded, l.t('continueUsing'),
+              l.t('continueUsingDesc')),
+          SizedBox(height: r.dp(48)),
           FilledButton(
-            onPressed: _nextPage,
-            child: const Text('Настроить разрешения'),
-          ),
+              onPressed: _nextPage, child: Text(l.t('setupPermissions'))),
         ],
       ),
     );
   }
 
-  Widget _step(ColorScheme cs, IconData icon, String title, String desc) {
+  Widget _step(
+      ColorScheme cs, Responsive r, IconData icon, String title, String desc) {
     return Row(
       children: [
         CircleAvatar(
-          radius: 24,
+          radius: r.dp(24),
           backgroundColor: cs.primaryContainer,
           child: Icon(icon, color: cs.onPrimaryContainer),
         ),
-        const SizedBox(width: 16),
+        SizedBox(width: r.dp(16)),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: TextStyle(
-                fontSize: 16, fontWeight: FontWeight.w600, color: cs.onSurface,
-              )),
-              const SizedBox(height: 4),
-              Text(desc, style: TextStyle(
-                fontSize: 14, color: cs.onSurfaceVariant,
-              )),
+              Text(title,
+                  style: TextStyle(
+                      fontSize: r.sp(16),
+                      fontWeight: FontWeight.w600,
+                      color: cs.onSurface)),
+              SizedBox(height: r.dp(4)),
+              Text(desc,
+                  style: TextStyle(
+                      fontSize: r.sp(14), color: cs.onSurfaceVariant)),
             ],
           ),
         ),
@@ -197,37 +212,36 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  // ── Страница 3: Основные разрешения ──
-
-  Widget _buildPermissionsPage(ColorScheme cs) {
+  Widget _buildPermissionsPage(ColorScheme cs, Responsive r) {
+    final l = AppLocalizations.of(context);
     final coreGranted = _usageGranted && _overlayGranted;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
+    return SingleChildScrollView(
+      padding: EdgeInsets.symmetric(horizontal: r.horizontalPadding + 12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          SizedBox(height: r.dp(40)),
           Text(
-            'Нужны два разрешения',
+            l.t('twoPermissions'),
             style: TextStyle(
-              fontSize: 22,
+              fontSize: r.sp(22),
               fontWeight: FontWeight.bold,
               color: cs.onSurface,
             ),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: r.dp(8)),
           Text(
-            'Без них приложение не сможет отслеживать запуск других приложений',
+            l.t('twoPermissionsDesc'),
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant),
+            style: TextStyle(fontSize: r.sp(14), color: cs.onSurfaceVariant),
           ),
-          const SizedBox(height: 40),
-
+          SizedBox(height: r.dp(40)),
           _permissionTile(
-            cs,
+            cs, r,
             icon: Icons.bar_chart_rounded,
-            title: 'Доступ к использованию',
-            subtitle: 'Позволяет определить, какое приложение открыто',
+            title: l.t('usageAccess'),
+            subtitle: l.t('usageAccessDesc'),
             granted: _usageGranted,
             onTap: () async {
               await PlatformChannel.requestUsageAccess();
@@ -235,13 +249,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               _refreshPermissions();
             },
           ),
-          const SizedBox(height: 16),
-
+          SizedBox(height: r.dp(16)),
           _permissionTile(
-            cs,
+            cs, r,
             icon: Icons.layers_rounded,
-            title: 'Наложение поверх приложений',
-            subtitle: 'Позволяет показать экран паузы',
+            title: l.t('overlayPermission'),
+            subtitle: l.t('overlayPermissionDesc'),
             granted: _overlayGranted,
             onTap: () async {
               await PlatformChannel.requestOverlayPermission();
@@ -249,69 +262,65 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               _refreshPermissions();
             },
           ),
-          const SizedBox(height: 16),
-
+          SizedBox(height: r.dp(16)),
           TextButton.icon(
             onPressed: _refreshPermissions,
             icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text('Проверить разрешения'),
+            label: Text(l.t('checkPermissions')),
           ),
-
-          const SizedBox(height: 40),
-
+          SizedBox(height: r.dp(40)),
           FilledButton(
             onPressed: coreGranted ? _nextPage : null,
-            child: const Text('Далее'),
+            child: Text(l.t('next')),
           ),
           if (!coreGranted) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Выдайте оба разрешения, чтобы продолжить',
-              style: TextStyle(fontSize: 12, color: cs.error),
-            ),
+            SizedBox(height: r.dp(8)),
+            Text(l.t('grantBoth'),
+                style: TextStyle(fontSize: r.sp(12), color: cs.error)),
           ],
+          SizedBox(height: r.dp(40)),
         ],
       ),
     );
   }
 
-  // ── Страница 4: Батарея + завершение ──
-
-  Widget _buildBatteryPage(ColorScheme cs) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
+  Widget _buildBatteryPage(ColorScheme cs, Responsive r) {
+    final l = AppLocalizations.of(context);
+    return SingleChildScrollView(
+      padding: EdgeInsets.symmetric(horizontal: r.horizontalPadding + 12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          SizedBox(height: r.dp(40)),
           Icon(
-            _batteryExempt ? Icons.battery_full_rounded : Icons.battery_alert_rounded,
-            size: 64,
+            _batteryExempt
+                ? Icons.battery_full_rounded
+                : Icons.battery_alert_rounded,
+            size: r.dp(64),
             color: _batteryExempt ? cs.primary : cs.onSurfaceVariant,
           ),
-          const SizedBox(height: 24),
+          SizedBox(height: r.dp(24)),
           Text(
-            'Оптимизация батареи',
+            l.t('batteryTitle'),
             style: TextStyle(
-              fontSize: 22,
+              fontSize: r.sp(22),
               fontWeight: FontWeight.bold,
               color: cs.onSurface,
             ),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: r.dp(8)),
           Text(
-            'Чтобы защита работала стабильно, отключите оптимизацию батареи '
-            'для Mindful Pause. Без этого система может остановить фоновый сервис.',
+            l.t('batteryDesc'),
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant),
+            style: TextStyle(fontSize: r.sp(14), color: cs.onSurfaceVariant),
           ),
-          const SizedBox(height: 32),
-
+          SizedBox(height: r.dp(32)),
           if (!_batteryExempt) ...[
             _permissionTile(
-              cs,
+              cs, r,
               icon: Icons.battery_saver_rounded,
-              title: 'Отключить оптимизацию батареи',
-              subtitle: 'Нажмите и выберите «Разрешить»',
+              title: l.t('disableBatteryOpt'),
+              subtitle: l.t('disableBatteryOptDesc'),
               granted: false,
               onTap: () async {
                 await PlatformChannel.requestBatteryOptimizationExemption();
@@ -319,57 +328,55 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 _refreshPermissions();
               },
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: r.dp(16)),
             TextButton.icon(
               onPressed: _refreshPermissions,
               icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Проверить'),
+              label: Text(l.t('check')),
             ),
           ] else ...[
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.all(r.dp(16)),
               decoration: BoxDecoration(
                 color: cs.primaryContainer.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(r.dp(16)),
               ),
               child: Row(
                 children: [
                   Icon(Icons.check_circle_rounded, color: cs.primary),
-                  const SizedBox(width: 12),
+                  SizedBox(width: r.dp(12)),
                   Expanded(
                     child: Text(
-                      'Оптимизация батареи отключена — сервис будет работать стабильно',
-                      style: TextStyle(color: cs.onSurface, fontSize: 14),
+                      l.t('batteryDisabled'),
+                      style: TextStyle(
+                          color: cs.onSurface, fontSize: r.sp(14)),
                     ),
                   ),
                 ],
               ),
             ),
           ],
-
-          const SizedBox(height: 40),
-
+          SizedBox(height: r.dp(40)),
           FilledButton(
-            onPressed: _finishOnboarding,
-            child: const Text('Начать'),
-          ),
+              onPressed: _finishOnboarding, child: Text(l.t('start'))),
           if (!_batteryExempt) ...[
-            const SizedBox(height: 8),
+            SizedBox(height: r.dp(8)),
             Text(
-              'Можно пропустить, но сервис может быть нестабильным',
+              l.t('skipWarning'),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+              style: TextStyle(
+                  fontSize: r.sp(12), color: cs.onSurfaceVariant),
             ),
           ],
+          SizedBox(height: r.dp(40)),
         ],
       ),
     );
   }
 
-  // ── Shared permission tile ──
-
   Widget _permissionTile(
-    ColorScheme cs, {
+    ColorScheme cs,
+    Responsive r, {
     required IconData icon,
     required String title,
     required String subtitle,
@@ -377,35 +384,42 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     required VoidCallback onTap,
   }) {
     return Material(
-      color: granted ? cs.primaryContainer.withValues(alpha: 0.3) : cs.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(16),
+      color: granted
+          ? cs.primaryContainer.withValues(alpha: 0.3)
+          : cs.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(r.dp(16)),
       child: InkWell(
         onTap: granted ? null : onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(r.dp(16)),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.all(r.dp(16)),
           child: Row(
             children: [
-              Icon(icon, color: granted ? cs.primary : cs.onSurfaceVariant),
-              const SizedBox(width: 16),
+              Icon(icon,
+                  color: granted ? cs.primary : cs.onSurfaceVariant),
+              SizedBox(width: r.dp(16)),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: TextStyle(
-                      fontWeight: FontWeight.w600, color: cs.onSurface,
-                    )),
-                    const SizedBox(height: 2),
-                    Text(subtitle, style: TextStyle(
-                      fontSize: 12, color: cs.onSurfaceVariant,
-                    )),
+                    Text(title,
+                        style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: cs.onSurface)),
+                    SizedBox(height: r.dp(2)),
+                    Text(subtitle,
+                        style: TextStyle(
+                            fontSize: r.sp(12),
+                            color: cs.onSurfaceVariant)),
                   ],
                 ),
               ),
               Icon(
-                granted ? Icons.check_circle_rounded : Icons.arrow_forward_ios_rounded,
+                granted
+                    ? Icons.check_circle_rounded
+                    : Icons.arrow_forward_ios_rounded,
                 color: granted ? cs.primary : cs.onSurfaceVariant,
-                size: 20,
+                size: r.dp(20),
               ),
             ],
           ),

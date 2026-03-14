@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mindfull/app.dart';
+import 'package:mindfull/l10n/app_localizations.dart';
+import 'package:mindfull/utils/responsive.dart';
 import 'package:mindfull/services/platform_channel.dart';
 import 'package:mindfull/services/notes_repository.dart';
 import 'package:mindfull/screens/app_selection_screen.dart';
@@ -13,13 +16,15 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObserver {
+class _SettingsScreenState extends State<SettingsScreen>
+    with WidgetsBindingObserver {
   bool _serviceRunning = false;
   bool _usageGranted = false;
   bool _overlayGranted = false;
   bool _batteryExempt = false;
   int _monitoredCount = 0;
   bool _loading = true;
+  String _currentLocaleCode = 'system';
 
   static const _privacyPolicyUrl = 'https://example.com/privacy';
 
@@ -28,6 +33,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _refresh();
+    _loadLocale();
   }
 
   @override
@@ -39,6 +45,19 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) _refresh();
+  }
+
+  Future<void> _loadLocale() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _currentLocaleCode = prefs.getString(kPrefLocale) ?? 'system';
+    });
+  }
+
+  void _changeLocale(String code) {
+    setState(() => _currentLocaleCode = code);
+    MindfulApp.setLocale(context, code);
   }
 
   Future<void> _refresh() async {
@@ -72,31 +91,31 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка: $e')),
+        SnackBar(
+            content: Text(
+                AppLocalizations.of(context).t('error', {'e': '$e'}))),
       );
     }
   }
 
   Future<void> _deleteAllData() async {
+    final l = AppLocalizations.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Удалить все данные?'),
-        content: const Text(
-          'Будут удалены все заметки, список приложений и настройки. '
-          'Это нельзя отменить.',
-        ),
+        title: Text(l.t('deleteAllDataConfirm')),
+        content: Text(l.t('deleteAllDataWarning')),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Отмена'),
+            child: Text(l.t('cancel')),
           ),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(ctx).colorScheme.error,
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Удалить всё'),
+            child: Text(l.t('deleteEverything')),
           ),
         ],
       ),
@@ -112,7 +131,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       await PlatformChannel.updateMonitoredApps([]);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Все данные удалены')),
+        SnackBar(content: Text(l.t('allDataDeleted'))),
       );
       _refresh();
     }
@@ -129,188 +148,281 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final l = AppLocalizations.of(context);
+    final r = Responsive(context);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Настройки'),
-      ),
+      appBar: AppBar(title: Text(l.t('settings'))),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-              children: [
-                // ── Сервис ──
-                _sectionHeader(cs, 'Основное'),
-                _buildCard(
-                  cs,
-                  isDark,
-                  child: SwitchListTile(
-                    title: const Text('Защита активна'),
-                    subtitle: Text(
-                      _serviceRunning ? 'Фоновый сервис работает' : 'Сервис остановлен',
-                    ),
-                    secondary: Icon(
-                      _serviceRunning ? Icons.shield_rounded : Icons.shield_outlined,
-                      color: _serviceRunning ? cs.primary : cs.onSurfaceVariant,
-                    ),
-                    value: _serviceRunning,
-                    onChanged: (_monitoredCount > 0 && _usageGranted && _overlayGranted)
-                        ? (val) => _toggleService(val)
-                        : null,
-                  ),
-                ),
-
-                if (!_usageGranted || !_overlayGranted) ...[
-                  const SizedBox(height: 8),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: cs.error.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(12),
+          : Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: r.maxContentWidth),
+                child: ListView(
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                  children: [
+                    // ── General ──
+                    _sectionHeader(cs, l.t('general'), r),
+                    _buildCard(
+                      cs, isDark, r,
+                      child: SwitchListTile(
+                        title: Text(l.protectionActive),
+                        subtitle: Text(_serviceRunning
+                            ? l.t('protectionActiveDesc')
+                            : l.t('serviceStopped')),
+                        secondary: Icon(
+                          _serviceRunning
+                              ? Icons.shield_rounded
+                              : Icons.shield_outlined,
+                          color: _serviceRunning
+                              ? cs.primary
+                              : cs.onSurfaceVariant,
+                        ),
+                        value: _serviceRunning,
+                        onChanged: (_monitoredCount > 0 &&
+                                _usageGranted &&
+                                _overlayGranted)
+                            ? (val) => _toggleService(val)
+                            : null,
                       ),
-                      child: Row(
+                    ),
+                    if (!_usageGranted || !_overlayGranted) ...[
+                      const SizedBox(height: 8),
+                      Padding(
+                        padding: EdgeInsets.symmetric(
+                            horizontal: r.horizontalPadding),
+                        child: Container(
+                          padding: EdgeInsets.all(r.dp(12)),
+                          decoration: BoxDecoration(
+                            color: cs.error.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.warning_amber_rounded,
+                                  color: cs.error, size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  l.t('permissionsNotGranted'),
+                                  style: TextStyle(
+                                      fontSize: r.sp(13), color: cs.error),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+
+                    SizedBox(height: r.dp(20)),
+
+                    // ── Language ──
+                    _sectionHeader(cs, l.t('language'), r),
+                    _buildCard(
+                      cs, isDark, r,
+                      child: _buildLanguageSelector(cs, l, r),
+                    ),
+
+                    SizedBox(height: r.dp(20)),
+
+                    // ── Apps ──
+                    _sectionHeader(cs, l.t('apps'), r),
+                    _buildCard(
+                      cs, isDark, r,
+                      child: ListTile(
+                        leading:
+                            Icon(Icons.apps_rounded, color: cs.primary),
+                        title: Text(l.t('controlledApps')),
+                        subtitle: Text(l.t('selected',
+                            {'count': '$_monitoredCount'})),
+                        trailing: const Icon(Icons.chevron_right_rounded,
+                            size: 20),
+                        onTap: () async {
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) =>
+                                    const AppSelectionScreen()),
+                          );
+                          _refresh();
+                        },
+                      ),
+                    ),
+
+                    SizedBox(height: r.dp(20)),
+
+                    // ── Permissions ──
+                    _sectionHeader(cs, l.t('permissions'), r),
+                    _buildCard(
+                      cs, isDark, r,
+                      child: Column(
                         children: [
-                          Icon(Icons.warning_amber_rounded, color: cs.error, size: 20),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              'Не все разрешения выданы',
-                              style: TextStyle(fontSize: 13, color: cs.error),
-                            ),
+                          _permissionTile(cs, l,
+                              title: l.t('usageAccess'),
+                              granted: _usageGranted,
+                              onTap: () =>
+                                  PlatformChannel.requestUsageAccess()),
+                          Divider(
+                              height: 1,
+                              indent: 56,
+                              color: cs.outlineVariant
+                                  .withValues(alpha: 0.3)),
+                          _permissionTile(cs, l,
+                              title: l.t('overlayPermission'),
+                              granted: _overlayGranted,
+                              onTap: () => PlatformChannel
+                                  .requestOverlayPermission()),
+                          Divider(
+                              height: 1,
+                              indent: 56,
+                              color: cs.outlineVariant
+                                  .withValues(alpha: 0.3)),
+                          _permissionTile(cs, l,
+                              title: l.t('batteryOptimization'),
+                              granted: _batteryExempt,
+                              onTap: () => PlatformChannel
+                                  .requestBatteryOptimizationExemption()),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                          horizontal: r.horizontalPadding, vertical: 8),
+                      child: TextButton.icon(
+                        onPressed: _refresh,
+                        icon:
+                            const Icon(Icons.refresh_rounded, size: 18),
+                        label: Text(l.t('refreshStatus')),
+                      ),
+                    ),
+
+                    SizedBox(height: r.dp(20)),
+
+                    // ── Data & Privacy ──
+                    _sectionHeader(cs, l.t('dataAndPrivacy'), r),
+                    _buildCard(
+                      cs, isDark, r,
+                      child: Column(
+                        children: [
+                          ListTile(
+                            leading: Icon(Icons.delete_forever_rounded,
+                                color: cs.error),
+                            title: Text(l.t('deleteAllData')),
+                            subtitle: Text(l.t('deleteAllDataDesc')),
+                            onTap: _deleteAllData,
+                          ),
+                          Divider(
+                              height: 1,
+                              indent: 56,
+                              color: cs.outlineVariant
+                                  .withValues(alpha: 0.3)),
+                          ListTile(
+                            leading: Icon(Icons.privacy_tip_outlined,
+                                color: cs.onSurfaceVariant),
+                            title: Text(l.t('privacyPolicy')),
+                            trailing: const Icon(
+                                Icons.open_in_new_rounded,
+                                size: 18),
+                            onTap: _openPrivacyPolicy,
                           ),
                         ],
                       ),
                     ),
-                  ),
-                ],
 
-                const SizedBox(height: 20),
+                    SizedBox(height: r.dp(20)),
 
-                // ── Приложения ──
-                _sectionHeader(cs, 'Приложения'),
-                _buildCard(
-                  cs,
-                  isDark,
-                  child: ListTile(
-                    leading: Icon(Icons.apps_rounded, color: cs.primary),
-                    title: const Text('Контролируемые приложения'),
-                    subtitle: Text('Выбрано: $_monitoredCount'),
-                    trailing: const Icon(Icons.chevron_right_rounded, size: 20),
-                    onTap: () async {
-                      await Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const AppSelectionScreen()),
-                      );
-                      _refresh();
-                    },
-                  ),
+                    // ── About ──
+                    _sectionHeader(cs, l.t('about'), r),
+                    _buildCard(
+                      cs, isDark, r,
+                      child: Column(
+                        children: [
+                          ListTile(
+                            leading: Icon(Icons.info_outline_rounded,
+                                color: cs.onSurfaceVariant),
+                            title: const Text('Mindful Pause'),
+                            subtitle:
+                                Text(l.t('version', {'v': '1.0.0'})),
+                          ),
+                          Divider(
+                              height: 1,
+                              indent: 56,
+                              color: cs.outlineVariant
+                                  .withValues(alpha: 0.3)),
+                          ListTile(
+                            leading: Icon(Icons.replay_rounded,
+                                color: cs.onSurfaceVariant),
+                            title: Text(l.t('showOnboarding')),
+                            onTap: () => _resetOnboarding(context),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    SizedBox(height: r.dp(40)),
+                  ],
                 ),
-
-                const SizedBox(height: 20),
-
-                // ── Разрешения ──
-                _sectionHeader(cs, 'Разрешения'),
-                _buildCard(
-                  cs,
-                  isDark,
-                  child: Column(
-                    children: [
-                      _permissionTile(
-                        cs,
-                        title: 'Доступ к использованию',
-                        granted: _usageGranted,
-                        onTap: () => PlatformChannel.requestUsageAccess(),
-                      ),
-                      Divider(height: 1, indent: 56, color: cs.outlineVariant.withValues(alpha: 0.3)),
-                      _permissionTile(
-                        cs,
-                        title: 'Наложение поверх приложений',
-                        granted: _overlayGranted,
-                        onTap: () => PlatformChannel.requestOverlayPermission(),
-                      ),
-                      Divider(height: 1, indent: 56, color: cs.outlineVariant.withValues(alpha: 0.3)),
-                      _permissionTile(
-                        cs,
-                        title: 'Оптимизация батареи',
-                        granted: _batteryExempt,
-                        onTap: () => PlatformChannel.requestBatteryOptimizationExemption(),
-                      ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: TextButton.icon(
-                    onPressed: _refresh,
-                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                    label: const Text('Обновить статус'),
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                // ── Данные ──
-                _sectionHeader(cs, 'Данные и конфиденциальность'),
-                _buildCard(
-                  cs,
-                  isDark,
-                  child: Column(
-                    children: [
-                      ListTile(
-                        leading: Icon(Icons.delete_forever_rounded, color: cs.error),
-                        title: const Text('Удалить все данные'),
-                        subtitle: const Text('Заметки, настройки, список'),
-                        onTap: _deleteAllData,
-                      ),
-                      Divider(height: 1, indent: 56, color: cs.outlineVariant.withValues(alpha: 0.3)),
-                      ListTile(
-                        leading: Icon(Icons.privacy_tip_outlined, color: cs.onSurfaceVariant),
-                        title: const Text('Политика конфиденциальности'),
-                        trailing: const Icon(Icons.open_in_new_rounded, size: 18),
-                        onTap: _openPrivacyPolicy,
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                // ── О приложении ──
-                _sectionHeader(cs, 'О приложении'),
-                _buildCard(
-                  cs,
-                  isDark,
-                  child: Column(
-                    children: [
-                      ListTile(
-                        leading: Icon(Icons.info_outline_rounded, color: cs.onSurfaceVariant),
-                        title: const Text('Mindful Pause'),
-                        subtitle: const Text('Версия 1.0.0'),
-                      ),
-                      Divider(height: 1, indent: 56, color: cs.outlineVariant.withValues(alpha: 0.3)),
-                      ListTile(
-                        leading: Icon(Icons.replay_rounded, color: cs.onSurfaceVariant),
-                        title: const Text('Показать онбординг'),
-                        onTap: () => _resetOnboarding(context),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 40),
-              ],
+              ),
             ),
     );
   }
 
-  Widget _sectionHeader(ColorScheme cs, String title) {
+  // ══════════════════════════════════════════════════════════
+  //  LANGUAGE SELECTOR
+  // ══════════════════════════════════════════════════════════
+
+  Widget _buildLanguageSelector(
+      ColorScheme cs, AppLocalizations l, Responsive r) {
+    final options = [
+      ('system', l.t('langSystem'), Icons.phone_android_rounded),
+      ('ru', l.t('langRu'), null),
+      ('en', l.t('langEn'), null),
+    ];
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      padding: EdgeInsets.symmetric(vertical: r.dp(8)),
+      child: Column(
+        children: options.map((opt) {
+          final (code, label, icon) = opt;
+          final selected = _currentLocaleCode == code;
+          return RadioListTile<String>(
+            value: code,
+            groupValue: _currentLocaleCode,
+            onChanged: (v) {
+              if (v != null) _changeLocale(v);
+            },
+            title: Text(
+              label,
+              style: TextStyle(
+                fontSize: r.sp(15),
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                color: cs.onSurface,
+              ),
+            ),
+            secondary: icon != null
+                ? Icon(icon, color: cs.onSurfaceVariant, size: r.dp(22))
+                : null,
+            activeColor: cs.primary,
+            dense: true,
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  SHARED WIDGETS
+  // ══════════════════════════════════════════════════════════
+
+  Widget _sectionHeader(ColorScheme cs, String title, Responsive r) {
+    return Padding(
+      padding:
+          EdgeInsets.fromLTRB(r.horizontalPadding, 4, r.horizontalPadding, 8),
       child: Text(
         title,
         style: TextStyle(
-          fontSize: 13,
+          fontSize: r.sp(13),
           fontWeight: FontWeight.w600,
           color: cs.primary,
           letterSpacing: 0.3,
@@ -319,7 +431,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     );
   }
 
-  Widget _buildCard(ColorScheme cs, bool isDark, {required Widget child}) {
+  Widget _buildCard(ColorScheme cs, bool isDark, Responsive r,
+      {required Widget child}) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Container(
@@ -327,10 +440,9 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
           color: isDark
               ? cs.surfaceContainerHighest.withValues(alpha: 0.4)
               : cs.surfaceContainerLow,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(r.dp(16)),
           border: Border.all(
             color: cs.outlineVariant.withValues(alpha: 0.15),
-            width: 1,
           ),
         ),
         clipBehavior: Clip.antiAlias,
@@ -340,7 +452,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   }
 
   Widget _permissionTile(
-    ColorScheme cs, {
+    ColorScheme cs,
+    AppLocalizations l, {
     required String title,
     required bool granted,
     required VoidCallback onTap,
@@ -353,32 +466,30 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       ),
       title: Text(title, style: const TextStyle(fontSize: 15)),
       subtitle: Text(
-        granted ? 'Выдано' : 'Не выдано',
+        granted ? l.t('granted') : l.t('notGranted'),
         style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
       ),
       trailing: granted
           ? null
-          : TextButton(
-              onPressed: onTap,
-              child: const Text('Выдать'),
-            ),
+          : TextButton(onPressed: onTap, child: Text(l.t('grant'))),
     );
   }
 
   Future<void> _resetOnboarding(BuildContext context) async {
+    final l = AppLocalizations.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Сбросить онбординг?'),
-        content: const Text('Вы увидите приветственный экран.'),
+        title: Text(l.t('resetOnboarding')),
+        content: Text(l.t('resetOnboardingDesc')),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Отмена'),
+            child: Text(l.t('cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Сбросить'),
+            child: Text(l.t('reset')),
           ),
         ],
       ),

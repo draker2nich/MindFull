@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mindfull/l10n/app_localizations.dart';
+import 'package:mindfull/utils/responsive.dart';
 import 'package:mindfull/services/platform_channel.dart';
 import 'package:mindfull/screens/app_selection_screen.dart';
 import 'package:mindfull/screens/settings_screen.dart';
@@ -10,10 +12,11 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, TickerProviderStateMixin {
+class HomeScreenState extends State<HomeScreen>
+    with WidgetsBindingObserver, TickerProviderStateMixin, RouteAware {
   bool _serviceRunning = false;
   bool _loading = true;
   int _monitoredCount = 0;
@@ -30,16 +33,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 3),
     )..repeat(reverse: true);
-
     _pulseAnimation = Tween<double>(begin: 0.95, end: 1.05).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
-
     _init();
   }
 
@@ -90,7 +90,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
       await _refresh();
     } catch (e) {
       if (!mounted) return;
-      _showSnackBar('Ошибка: $e');
+      _showSnackBar(AppLocalizations.of(context).t('error', {'e': '$e'}));
     }
   }
 
@@ -101,17 +101,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
       await _refresh();
     } catch (e) {
       if (!mounted) return;
-      _showSnackBar('Ошибка: $e');
+      _showSnackBar(AppLocalizations.of(context).t('error', {'e': '$e'}));
     }
   }
 
   Future<void> _toggleService() async {
     HapticFeedback.mediumImpact();
-    if (_serviceRunning) {
-      await _stopService();
-    } else {
-      await _startService();
-    }
+    _serviceRunning ? await _stopService() : await _startService();
   }
 
   Future<void> _setCooldown(int minutes) async {
@@ -135,148 +131,145 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
     );
   }
 
-  String _cooldownLabel(int minutes) {
-    if (minutes < 60) return '$minutes мин';
-    return '1 час';
-  }
-
-  String _cooldownLabelFull(int minutes) {
-    if (minutes == 1) return '1 минута';
-    if (minutes < 5) return '$minutes минуты';
-    if (minutes == 60) return '1 час';
-    return '$minutes минут';
-  }
-
-  /// Текст-подсказка для кнопки когда она неактивна
-  String? get _disabledReason {
-    if (_monitoredCount == 0) return 'Сначала выберите приложения для контроля';
-    if (!_permissionsOk) return 'Выдайте необходимые разрешения в настройках';
-    return null;
-  }
-
   bool get _canToggle => _monitoredCount > 0 && _permissionsOk;
+
+  /// Navigate to AppSelectionScreen and refresh when it pops.
+  Future<void> _openAppSelection() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const AppSelectionScreen()),
+    );
+    // Always refresh after returning — this is the fix for the
+    // first-run bug where apps were selected during onboarding
+    // but the home screen still showed 0 monitored.
+    await _refresh();
+    // Auto-start service if conditions are now met
+    if (!_serviceRunning && _monitoredCount > 0 && _permissionsOk) {
+      await _startService();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final l = AppLocalizations.of(context);
+    final r = Responsive(context);
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
       child: Scaffold(
         body: _loading
             ? const Center(child: CircularProgressIndicator())
-            : CustomScrollView(
-                physics: const BouncingScrollPhysics(),
-                slivers: [
-                  SliverAppBar(
-                    floating: true,
-                    snap: true,
-                    backgroundColor: Colors.transparent,
-                    elevation: 0,
-                    title: Text(
-                      'Mindful Pause',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                        color: cs.onSurface,
-                        letterSpacing: -0.5,
+            : Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: r.maxContentWidth),
+                  child: CustomScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    slivers: [
+                      SliverAppBar(
+                        floating: true,
+                        snap: true,
+                        backgroundColor: Colors.transparent,
+                        elevation: 0,
+                        title: Text(
+                          l.appTitle,
+                          style: TextStyle(
+                            fontSize: r.sp(20),
+                            fontWeight: FontWeight.w700,
+                            color: cs.onSurface,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                        actions: [
+                          IconButton(
+                            icon: Icon(Icons.settings_rounded,
+                                color: cs.onSurfaceVariant),
+                            onPressed: () async {
+                              await Navigator.of(context).push(
+                                MaterialPageRoute(
+                                    builder: (_) => const SettingsScreen()),
+                              );
+                              _refresh();
+                            },
+                          ),
+                          SizedBox(width: r.dp(8)),
+                        ],
                       ),
-                    ),
-                    actions: [
-                      IconButton(
-                        icon: Icon(Icons.settings_rounded, color: cs.onSurfaceVariant),
-                        onPressed: () async {
-                          await Navigator.of(context).push(
-                            MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                          );
-                          _refresh();
-                        },
+                      SliverPadding(
+                        padding: EdgeInsets.symmetric(
+                            horizontal: r.horizontalPadding),
+                        sliver: SliverList(
+                          delegate: SliverChildListDelegate([
+                            SizedBox(height: r.dp(8)),
+                            _buildHeroCard(cs, isDark, l, r),
+                            SizedBox(height: r.dp(20)),
+                            _buildCooldownCard(cs, isDark, l, r),
+                            SizedBox(height: r.dp(16)),
+                            _buildQuickAction(
+                              cs, isDark, r,
+                              icon: Icons.apps_rounded,
+                              title: l.t('apps'),
+                              value: _monitoredCount > 0
+                                  ? l.t('appsSelected',
+                                      {'count': '$_monitoredCount'})
+                                  : l.t('tapToSelect'),
+                              onTap: _openAppSelection,
+                            ),
+                            SizedBox(height: r.dp(12)),
+                            _buildQuickAction(
+                              cs, isDark, r,
+                              icon: Icons.history_rounded,
+                              title: l.t('notesHistory'),
+                              value: l.t('notesHistoryDesc'),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                      builder: (_) =>
+                                          const NotesHistoryScreen()),
+                                );
+                              },
+                            ),
+                            SizedBox(height: r.dp(40)),
+                          ]),
+                        ),
                       ),
-                      const SizedBox(width: 8),
                     ],
                   ),
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    sliver: SliverList(
-                      delegate: SliverChildListDelegate([
-                        const SizedBox(height: 8),
-                        _buildHeroCard(cs, isDark),
-                        const SizedBox(height: 20),
-                        _buildCooldownCard(cs, isDark),
-                        const SizedBox(height: 16),
-                        _buildQuickAction(
-                          cs, isDark,
-                          icon: Icons.apps_rounded,
-                          title: 'Приложения',
-                          value: _monitoredCount > 0
-                              ? '$_monitoredCount выбрано'
-                              : 'Нажмите, чтобы выбрать',
-                          onTap: () async {
-                            await Navigator.of(context).push(
-                              MaterialPageRoute(builder: (_) => const AppSelectionScreen()),
-                            );
-                            _refresh();
-                          },
-                        ),
-                        const SizedBox(height: 12),
-                        _buildQuickAction(
-                          cs, isDark,
-                          icon: Icons.history_rounded,
-                          title: 'История заметок',
-                          value: 'Что вы писали на экранах паузы',
-                          onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(builder: (_) => const NotesHistoryScreen()),
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 40),
-                      ]),
-                    ),
-                  ),
-                ],
+                ),
               ),
       ),
     );
   }
 
-  // ══════════════════════════════════════════════════════════
-  //  HERO STATUS CARD
-  // ══════════════════════════════════════════════════════════
-
-  Widget _buildHeroCard(ColorScheme cs, bool isDark) {
+  Widget _buildHeroCard(
+      ColorScheme cs, bool isDark, AppLocalizations l, Responsive r) {
     final active = _serviceRunning;
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(28),
+      padding: EdgeInsets.all(r.dp(28)),
       decoration: BoxDecoration(
         color: active
             ? cs.primary.withValues(alpha: isDark ? 0.15 : 0.08)
             : cs.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(28),
+        borderRadius: BorderRadius.circular(r.dp(28)),
         border: Border.all(
           color: active
               ? cs.primary.withValues(alpha: 0.2)
               : cs.outlineVariant.withValues(alpha: 0.3),
-          width: 1,
         ),
       ),
       child: Column(
         children: [
-          // Animated shield
           AnimatedBuilder(
             animation: _pulseAnimation,
-            builder: (context, child) {
-              return Transform.scale(
-                scale: active ? _pulseAnimation.value : 1.0,
-                child: child,
-              );
-            },
+            builder: (context, child) => Transform.scale(
+              scale: active ? _pulseAnimation.value : 1.0,
+              child: child,
+            ),
             child: Container(
-              width: 72,
-              height: 72,
+              width: r.dp(72),
+              height: r.dp(72),
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: active
@@ -285,73 +278,76 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
               ),
               child: Icon(
                 active ? Icons.shield_rounded : Icons.shield_outlined,
-                size: 36,
-                color: active ? cs.primary : cs.onSurfaceVariant.withValues(alpha: 0.5),
+                size: r.dp(36),
+                color: active
+                    ? cs.primary
+                    : cs.onSurfaceVariant.withValues(alpha: 0.5),
               ),
             ),
           ),
-          const SizedBox(height: 20),
+          SizedBox(height: r.dp(20)),
           Text(
-            active ? 'Защита активна' : 'Защита отключена',
+            active ? l.protectionActive : l.protectionOff,
             style: TextStyle(
-              fontSize: 22,
+              fontSize: r.sp(22),
               fontWeight: FontWeight.w700,
               color: cs.onSurface,
               letterSpacing: -0.5,
             ),
           ),
-          const SizedBox(height: 6),
+          SizedBox(height: r.dp(6)),
           Text(
             active
-                ? 'Отслеживается: $_monitoredCount'
+                ? l.t('monitored', {'count': '$_monitoredCount'})
                 : _monitoredCount > 0
-                    ? 'Готово к запуску · $_monitoredCount приложений'
-                    : 'Сначала выберите приложения',
-            style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant),
+                    ? l.t('readyToStart', {'count': '$_monitoredCount'})
+                    : l.t('selectAppsFirst'),
+            style: TextStyle(fontSize: r.sp(14), color: cs.onSurfaceVariant),
           ),
-
-          // Предупреждения
           if (!_permissionsOk && !active) ...[
-            const SizedBox(height: 12),
+            SizedBox(height: r.dp(12)),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: EdgeInsets.symmetric(
+                  horizontal: r.dp(12), vertical: r.dp(6)),
               decoration: BoxDecoration(
                 color: cs.error.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(r.dp(8)),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.warning_amber_rounded, size: 16, color: cs.error),
-                  const SizedBox(width: 6),
+                  Icon(Icons.warning_amber_rounded,
+                      size: r.dp(16), color: cs.error),
+                  SizedBox(width: r.dp(6)),
                   Flexible(
                     child: Text(
-                      'Нужны разрешения — откройте настройки',
-                      style: TextStyle(fontSize: 12, color: cs.error, fontWeight: FontWeight.w500),
+                      l.t('needPermissions'),
+                      style: TextStyle(
+                        fontSize: r.sp(12),
+                        color: cs.error,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
           ],
-
-          const SizedBox(height: 24),
-
-          // ── Кнопка ВСЕГДА видна ──
+          SizedBox(height: r.dp(24)),
           SizedBox(
             width: double.infinity,
-            height: 52,
+            height: r.dp(52),
             child: FilledButton(
               onPressed: _canToggle ? _toggleService : null,
               style: FilledButton.styleFrom(
-                backgroundColor: active
-                    ? cs.error.withValues(alpha: 0.9)
-                    : cs.primary,
+                backgroundColor:
+                    active ? cs.error.withValues(alpha: 0.9) : cs.primary,
                 foregroundColor: active ? cs.onError : cs.onPrimary,
                 disabledBackgroundColor: cs.surfaceContainerHighest,
-                disabledForegroundColor: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                disabledForegroundColor:
+                    cs.onSurfaceVariant.withValues(alpha: 0.5),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(r.dp(16)),
                 ),
                 elevation: 0,
               ),
@@ -364,29 +360,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
                         : _canToggle
                             ? Icons.play_arrow_rounded
                             : Icons.lock_outline_rounded,
-                    size: 22,
+                    size: r.dp(22),
                   ),
-                  const SizedBox(width: 8),
+                  SizedBox(width: r.dp(8)),
                   Text(
                     active
-                        ? 'Остановить защиту'
-                        : _canToggle
-                            ? 'Включить защиту'
-                            : 'Включить защиту',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        ? l.t('stopProtection')
+                        : l.t('enableProtection'),
+                    style: TextStyle(
+                        fontSize: r.sp(16), fontWeight: FontWeight.w600),
                   ),
                 ],
               ),
             ),
           ),
-
-          // Подсказка почему кнопка неактивна
           if (!_canToggle && !active) ...[
-            const SizedBox(height: 10),
+            SizedBox(height: r.dp(10)),
             Text(
-              _disabledReason ?? '',
+              _monitoredCount == 0
+                  ? l.t('selectAppsHint')
+                  : l.t('grantPermissionsHint'),
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant.withValues(alpha: 0.7)),
+              style: TextStyle(
+                fontSize: r.sp(12),
+                color: cs.onSurfaceVariant.withValues(alpha: 0.7),
+              ),
             ),
           ],
         ],
@@ -394,21 +392,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
     );
   }
 
-  // ══════════════════════════════════════════════════════════
-  //  COOLDOWN CARD
-  // ══════════════════════════════════════════════════════════
-
-  Widget _buildCooldownCard(ColorScheme cs, bool isDark) {
+  Widget _buildCooldownCard(
+      ColorScheme cs, bool isDark, AppLocalizations l, Responsive r) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(r.dp(20)),
       decoration: BoxDecoration(
         color: isDark
             ? cs.surfaceContainerHighest.withValues(alpha: 0.4)
             : cs.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(r.dp(22)),
         border: Border.all(
           color: cs.outlineVariant.withValues(alpha: 0.2),
-          width: 1,
         ),
       ),
       child: Column(
@@ -417,32 +411,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
           Row(
             children: [
               Container(
-                width: 40,
-                height: 40,
+                width: r.dp(40),
+                height: r.dp(40),
                 decoration: BoxDecoration(
                   color: cs.primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(r.dp(12)),
                 ),
-                child: Icon(Icons.timer_rounded, size: 22, color: cs.primary),
+                child: Icon(Icons.timer_rounded,
+                    size: r.dp(22), color: cs.primary),
               ),
-              const SizedBox(width: 14),
+              SizedBox(width: r.dp(14)),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Cooldown',
+                      l.t('cooldown'),
                       style: TextStyle(
-                        fontSize: 16,
+                        fontSize: r.sp(16),
                         fontWeight: FontWeight.w600,
                         color: cs.onSurface,
                       ),
                     ),
                     Text(
                       _cooldownEnabled
-                          ? 'Перерыв ${_cooldownLabelFull(_cooldownMinutes)} после подтверждения'
-                          : 'Пауза при каждом входе',
-                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                          ? l.t('cooldownDesc', {
+                              'minutes':
+                                  l.cooldownLabelFull(_cooldownMinutes)
+                            })
+                          : l.t('cooldownEveryTime'),
+                      style: TextStyle(
+                          fontSize: r.sp(12), color: cs.onSurfaceVariant),
                     ),
                   ],
                 ),
@@ -457,14 +456,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
             ],
           ),
           if (_cooldownEnabled) ...[
-            const SizedBox(height: 16),
+            SizedBox(height: r.dp(16)),
             SizedBox(
-              height: 40,
+              height: r.dp(40),
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 physics: const BouncingScrollPhysics(),
                 itemCount: _cooldownOptions.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                separatorBuilder: (_, __) => SizedBox(width: r.dp(8)),
                 itemBuilder: (context, index) {
                   final minutes = _cooldownOptions[index];
                   final selected = _cooldownMinutes == minutes;
@@ -475,26 +474,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
                     },
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      padding:
+                          EdgeInsets.symmetric(horizontal: r.dp(16)),
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         color: selected
                             ? cs.primary
-                            : cs.surfaceContainerHighest.withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(12),
+                            : cs.surfaceContainerHighest
+                                .withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(r.dp(12)),
                         border: selected
                             ? null
                             : Border.all(
-                                color: cs.outlineVariant.withValues(alpha: 0.3),
-                                width: 1,
-                              ),
+                                color: cs.outlineVariant
+                                    .withValues(alpha: 0.3)),
                       ),
                       child: Text(
-                        _cooldownLabel(minutes),
+                        l.cooldownLabelShort(minutes),
                         style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                          color: selected ? cs.onPrimary : cs.onSurfaceVariant,
+                          fontSize: r.sp(13),
+                          fontWeight:
+                              selected ? FontWeight.w600 : FontWeight.w500,
+                          color: selected
+                              ? cs.onPrimary
+                              : cs.onSurfaceVariant,
                         ),
                       ),
                     ),
@@ -508,12 +511,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
     );
   }
 
-  // ══════════════════════════════════════════════════════════
-  //  QUICK ACTION
-  // ══════════════════════════════════════════════════════════
-
   Widget _buildQuickAction(
-    ColorScheme cs, bool isDark, {
+    ColorScheme cs,
+    bool isDark,
+    Responsive r, {
     required IconData icon,
     required String title,
     required String value,
@@ -523,24 +524,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
       color: isDark
           ? cs.surfaceContainerHighest.withValues(alpha: 0.4)
           : cs.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(r.dp(18)),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(r.dp(18)),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+          padding: EdgeInsets.symmetric(
+              horizontal: r.dp(20), vertical: r.dp(18)),
           child: Row(
             children: [
               Container(
-                width: 40,
-                height: 40,
+                width: r.dp(40),
+                height: r.dp(40),
                 decoration: BoxDecoration(
                   color: cs.primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(r.dp(12)),
                 ),
-                child: Icon(icon, size: 22, color: cs.primary),
+                child: Icon(icon, size: r.dp(22), color: cs.primary),
               ),
-              const SizedBox(width: 14),
+              SizedBox(width: r.dp(14)),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -548,20 +550,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver, Ti
                     Text(
                       title,
                       style: TextStyle(
-                        fontSize: 15,
+                        fontSize: r.sp(15),
                         fontWeight: FontWeight.w600,
                         color: cs.onSurface,
                       ),
                     ),
                     Text(
                       value,
-                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                      style: TextStyle(
+                          fontSize: r.sp(12), color: cs.onSurfaceVariant),
                     ),
                   ],
                 ),
               ),
               Icon(Icons.chevron_right_rounded,
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.5), size: 22),
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.5),
+                  size: r.dp(22)),
             ],
           ),
         ),
