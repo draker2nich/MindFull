@@ -19,12 +19,18 @@ import com.google.android.material.textfield.TextInputEditText
 /**
  * Экран паузы. Показывается поверх целевого приложения.
  *
+ * Поддерживает повторные вызовы через onNewIntent:
+ * - Если сервис показывает паузу для appA, а потом для appB —
+ *   PauseActivity полностью сбрасывается (таймер, анимация, заметка, флаги)
+ *   и начинает заново для appB.
+ * - Если сервис показывает паузу повторно для того же appA —
+ *   то же самое: полный сброс, таймер с начала.
+ *
  * Жизненный цикл:
- * - onCreate: запускает таймер (60с) и дыхательную анимацию
+ * - onCreate / onNewIntent → initSession(): запускает таймер (60с) и дыхательную анимацию
  * - Пользователь ждёт окончания таймера → появляется кнопка "Открыть [app]"
- * - Нажатие кнопки → записывает confirmation в SharedPreferences → запускает target → finish()
- * - Если пользователь ушёл без нажатия (onPause без didProceedToApp) →
- *   ничего не записываем, сервис при следующем входе покажет паузу заново
+ * - Нажатие кнопки → записывает confirmation + cooldown → запускает target → finish()
+ * - Если пользователь ушёл без нажатия → ничего не записываем, сервис покажет заново
  *
  * ВАЖНО: confirmation записывается СИНХРОННО (commit) чтобы сервис
  * гарантированно прочитал его при следующем poll'е.
@@ -54,6 +60,7 @@ class PauseActivity : AppCompatActivity() {
     private lateinit var breathGlow: View
     private lateinit var btnProceed: MaterialButton
     private lateinit var etNote: TextInputEditText
+    private var tvSubtitle: TextView? = null
 
     private var targetPackage: String = ""
     private var appName: String = ""
@@ -67,42 +74,86 @@ class PauseActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_pause)
 
-        targetPackage = intent.getStringExtra(EXTRA_TARGET_PACKAGE) ?: ""
-        appName = intent.getStringExtra(EXTRA_APP_NAME) ?: "приложение"
-
-        Log.d(TAG, "onCreate for: $targetPackage ($appName)")
-
         tvTimer = findViewById(R.id.tvTimer)
         tvBreathHint = findViewById(R.id.tvBreathHint)
         breathCircle = findViewById(R.id.breathCircle)
         breathGlow = findViewById(R.id.breathGlow)
         btnProceed = findViewById(R.id.btnProceed)
         etNote = findViewById(R.id.etNote)
+        tvSubtitle = findViewById(R.id.tvSubtitle)
 
-        findViewById<TextView>(R.id.tvSubtitle)?.text = "Перед открытием $appName"
+        btnProceed.setOnClickListener {
+            onProceedClicked()
+        }
+
+        initSession(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        Log.d(TAG, "onNewIntent — resetting session")
+
+        // Сохраняем заметку предыдущей сессии если есть
+        saveNoteOnce()
+
+        // Полный сброс для новой сессии
+        initSession(intent)
+    }
+
+    /**
+     * Инициализирует (или полностью переинициализирует) сессию паузы.
+     * Вызывается из onCreate и onNewIntent.
+     */
+    private fun initSession(intent: Intent) {
+        // Останавливаем предыдущий таймер и анимацию
+        timer?.cancel()
+        timer = null
+        breathAnimator?.cancel()
+        breathAnimator = null
+
+        // Сбрасываем все флаги
+        timerFinished = false
+        didProceedToApp = false
+        noteSaved = false
+
+        // Читаем данные из intent
+        targetPackage = intent.getStringExtra(EXTRA_TARGET_PACKAGE) ?: ""
+        appName = intent.getStringExtra(EXTRA_APP_NAME) ?: "приложение"
+
+        Log.d(TAG, "initSession for: $targetPackage ($appName)")
+
+        // Сбрасываем UI
+        tvSubtitle?.text = "Перед открытием $appName"
+        etNote.setText("")
+        tvTimer.text = (TIMER_DURATION_MS / 1000).toString()
+        tvBreathHint.text = "Вдох..."
 
         btnProceed.text = "Подожди..."
         btnProceed.isEnabled = false
         btnProceed.alpha = 0.5f
 
+        // Сбрасываем scale/alpha анимаций дыхания к начальным значениям
+        breathCircle.scaleX = 1.0f
+        breathCircle.scaleY = 1.0f
+        breathGlow.scaleX = 1.0f
+        breathGlow.scaleY = 1.0f
+        breathGlow.alpha = 0.4f
+
+        // Запускаем заново
         startTimer(TIMER_DURATION_MS)
         startBreathAnimation()
-
-        btnProceed.setOnClickListener {
-            onProceedClicked()
-        }
     }
 
     private fun onProceedClicked() {
-        if (didProceedToApp) return // Защита от двойного нажатия
+        if (didProceedToApp) return
         didProceedToApp = true
 
         Log.d(TAG, "User clicked Proceed for: $targetPackage")
 
         saveNoteOnce()
 
-        // 1. Записываем confirmation СИНХРОННО (commit, не apply)
-        //    чтобы сервис гарантированно увидел при следующем poll
+        // 1. Записываем confirmation СИНХРОННО
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val editor = prefs.edit()
 
@@ -116,7 +167,7 @@ class PauseActivity : AppCompatActivity() {
             Log.d(TAG, "Cooldown timestamp set for $targetPackage")
         }
 
-        editor.commit() // СИНХРОННО!
+        editor.commit()
 
         // 3. Запускаем целевое приложение
         launchTargetApp()
@@ -128,9 +179,8 @@ class PauseActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         if (!didProceedToApp) {
-            // Пользователь ушёл без подтверждения — сохраняем заметку если есть
             saveNoteOnce()
-            Log.d(TAG, "onPause without proceed — pause will reset")
+            Log.d(TAG, "onPause without proceed — pause will reset on next entry")
         }
     }
 
@@ -143,7 +193,6 @@ class PauseActivity : AppCompatActivity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        // Не даём уйти по Back пока таймер не закончен
         if (!timerFinished) return
         saveNoteOnce()
         finish()

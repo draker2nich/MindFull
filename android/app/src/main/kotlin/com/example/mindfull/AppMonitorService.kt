@@ -21,28 +21,27 @@ import android.util.Log
 /**
  * Сервис мониторинга foreground-приложений.
  *
- * Каждые 500мс читает UsageEvents и обрабатывает каждый ACTIVITY_RESUMED
- * в хронологическом порядке. Для каждого отслеживаемого пакета ведёт
- * независимую state-machine.
+ * Каждые 500мс читает UsageEvents и определяет текущий foreground-пакет.
+ * Для каждого отслеживаемого пакета ведёт независимую state-machine.
  *
  * STATE MACHINE (per-package):
  *
- *   IDLE ──(foreground)──→ проверка cooldown
- *           │                 │
- *           │        cooldown active → ACCESS_GRANTED
- *           │        cooldown нет    → PAUSE_SHOWING (запуск PauseActivity)
+ *   IDLE ──(enters foreground)──→ проверка cooldown
+ *           │                       │
+ *           │              cooldown active → ACCESS_GRANTED
+ *           │              cooldown нет    → PAUSE_SHOWING (запуск PauseActivity)
  *           │
- *   PAUSE_SHOWING ──(user leaves to non-our pkg)──→ IDLE
- *                  ──(user leaves to our pkg)──→ stay PAUSE_SHOWING
+ *   PAUSE_SHOWING ──(leaves without confirm)──→ IDLE
  *                  ──(confirmation consumed)──→ ACCESS_GRANTED
  *
- *   ACCESS_GRANTED ──(user leaves to non-our pkg)──→ IDLE
- *                   ──(user leaves to our pkg)──→ stay ACCESS_GRANTED
+ *   ACCESS_GRANTED ──(leaves foreground)──→ IDLE
  *
- * "User leaves" = другой пакет стал foreground.
- * "Our pkg" = com.example.mindfull (PauseActivity / MainActivity).
- * Переход на наш пакет НЕ сбрасывает state целевого приложения,
- * потому что PauseActivity — часть паузы для этого приложения.
+ * "Leaves foreground" = другой НЕ-наш пакет стал foreground, или экран выключился.
+ * Переход на наш пакет (PauseActivity) НЕ считается уходом.
+ *
+ * hasLeftForeground map отслеживает уход пользователя из каждого пакета,
+ * чтобы отличить внутреннюю навигацию (повторный resumed без ухода)
+ * от реального повторного входа (resumed после ухода).
  */
 class AppMonitorService : Service() {
 
@@ -67,19 +66,16 @@ class AppMonitorService : Service() {
         var isRunning = false
             private set
 
-        fun updateMonitoredPackages(context: Context, packages: List<String>) {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        fun updateMonitoredPackages(ctx: Context, packages: List<String>) {
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.edit().putStringSet(KEY_MONITORED, packages.toSet()).apply()
             Log.d(TAG, "Updated monitored packages: $packages")
         }
     }
 
     private enum class AppState {
-        /** Нет активной сессии. При новом входе — проверяем cooldown, показываем паузу. */
         IDLE,
-        /** PauseActivity показывается для этого пакета. */
         PAUSE_SHOWING,
-        /** Пользователь нажал "Открыть" — доступ выдан. */
         ACCESS_GRANTED,
     }
 
@@ -89,19 +85,17 @@ class AppMonitorService : Service() {
     private var powerManager: PowerManager? = null
     private var isScreenOn = true
 
-    /** Независимое состояние для каждого отслеживаемого пакета */
     private val appStates = mutableMapOf<String, AppState>()
-
-    /** Timestamp последнего обработанного UsageEvent */
     private var lastProcessedEventTime: Long = 0
+    private var currentForeground: String? = null
 
     /**
-     * Пакет, который СЕЙЧАС на переднем плане.
-     * Обновляется при каждом ACTIVITY_RESUMED.
-     * Используется чтобы определить "уход" — когда другой пакет стал foreground,
-     * все отслеживаемые пакеты (кроме нового) у которых state != IDLE → сбрасываются.
+     * Отслеживает, уходил ли пользователь из каждого пакета.
+     * true = пакет уходил с foreground → следующий resumed = новый вход.
+     * false = пакет на foreground непрерывно → resumed = навигация внутри.
+     * default true для первого входа.
      */
-    private var currentForeground: String? = null
+    private val hasLeftForeground = mutableMapOf<String, Boolean>()
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -164,6 +158,7 @@ class AppMonitorService : Service() {
                 startForegroundWithNotification()
                 isRunning = true
                 appStates.clear()
+                hasLeftForeground.clear()
                 currentForeground = null
                 lastProcessedEventTime = System.currentTimeMillis()
                 clearPauseConfirmation()
@@ -190,22 +185,13 @@ class AppMonitorService : Service() {
     // ══════════════════════════════════════════════════════════
 
     private fun poll() {
-        // 1. Проверяем подтверждение от PauseActivity
         consumePauseConfirmation()
-
-        // 2. Читаем ВСЕ ACTIVITY_RESUMED события с прошлого poll'а
         val transitions = collectResumedEvents()
-
-        // 3. Обрабатываем каждый переход последовательно
         for (pkg in transitions) {
             processResumedEvent(pkg)
         }
     }
 
-    /**
-     * Возвращает хронологический список пакетов из ACTIVITY_RESUMED событий
-     * с момента последнего вызова. Если A→B→A между poll'ами → [A, B, A].
-     */
     private fun collectResumedEvents(): List<String> {
         val now = System.currentTimeMillis()
         val start = if (lastProcessedEventTime > 0) lastProcessedEventTime else now - 3000
@@ -219,7 +205,8 @@ class AppMonitorService : Service() {
         while (usageEvents.hasNextEvent()) {
             usageEvents.getNextEvent(event)
             if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED &&
-                event.timeStamp > lastProcessedEventTime) {
+                event.timeStamp > lastProcessedEventTime
+            ) {
                 result.add(event.packageName)
                 if (event.timeStamp > maxTime) maxTime = event.timeStamp
             }
@@ -236,124 +223,103 @@ class AppMonitorService : Service() {
     //  PER-EVENT PROCESSING
     // ══════════════════════════════════════════════════════════
 
-    /**
-     * Обрабатывает один ACTIVITY_RESUMED для пакета [pkg].
-     *
-     * Логика:
-     * 1. Если pkg == наш пакет → запоминаем currentForeground, не трогаем states
-     * 2. Если pkg != currentForeground (смена foreground на ЧУЖОЙ пакет):
-     *    a) Все отслеживаемые пакеты в состоянии PAUSE_SHOWING или ACCESS_GRANTED,
-     *       кроме pkg, сбрасываем в IDLE (пользователь ушёл из них)
-     *    b) Если pkg — отслеживаемый → обрабатываем вход
-     * 3. Если pkg == currentForeground → ничего (тот же пакет, повторный resumed)
-     */
     private fun processResumedEvent(pkg: String) {
+        val prevForeground = currentForeground
+
         // ── Наш пакет (PauseActivity / MainActivity) ──
         if (isOurPackage(pkg)) {
             currentForeground = pkg
-            // НЕ сбрасываем states — PauseActivity является частью процесса паузы
             return
         }
 
-        // ── Смена foreground на чужой пакет ──
-        if (pkg != currentForeground) {
-            val prev = currentForeground
-            currentForeground = pkg
+        // ── Чужой пакет стал foreground ──
+        currentForeground = pkg
+        val comingFromOurPkg = prevForeground != null && isOurPackage(prevForeground)
 
-            // Все отслеживаемые пакеты, которые НЕ являются текущим новым foreground
-            // и НЕ в IDLE — сбрасываем в IDLE.
-            // Это означает: пользователь ушёл из них.
-            // Исключение: если prev был наш пакет, а новый — тот же отслеживаемый,
-            // к которому привязана пауза (PauseActivity → target после confirm).
-            // Это обработается ниже через ACCESS_GRANTED check.
-            for ((trackedPkg, state) in appStates.entries.toList()) {
-                if (trackedPkg != pkg && state != AppState.IDLE) {
-                    // Не сбрасываем если переход был наш_пакет → другой_отслеживаемый,
-                    // потому что это нормальный flow: пользователь был в PauseActivity для appA,
-                    // а потом foreground стал appB. appA надо сбросить.
-                    Log.d(TAG, "[$trackedPkg] User left (fg now $pkg) → IDLE (was $state)")
+        // Все отслеживаемые пакеты кроме текущего: помечаем как ушедшие, сбрасываем в IDLE
+        for ((trackedPkg, state) in appStates.entries.toList()) {
+            if (trackedPkg != pkg && state != AppState.IDLE) {
+                Log.d(TAG, "[$trackedPkg] User left (fg now $pkg) → IDLE (was $state)")
+                appStates[trackedPkg] = AppState.IDLE
+                hasLeftForeground[trackedPkg] = true
+            }
+        }
+
+        val monitored = prefs.getStringSet(KEY_MONITORED, emptySet()) ?: emptySet()
+
+        if (pkg !in monitored) {
+            // Не отслеживаемый — помечаем все отслеживаемые как ушедшие
+            for (trackedPkg in monitored) {
+                if (appStates.getOrDefault(trackedPkg, AppState.IDLE) != AppState.IDLE) {
                     appStates[trackedPkg] = AppState.IDLE
                 }
+                hasLeftForeground[trackedPkg] = true
             }
-
-            // Для текущего pkg:
-            // Если prev был наш пакет — это может быть PauseActivity → target после confirm.
-            // Если prev был другой пакет — это новый вход.
-            val comingFromOurPkg = prev != null && isOurPackage(prev)
-
-            val monitored = prefs.getStringSet(KEY_MONITORED, emptySet()) ?: emptySet()
-            if (pkg !in monitored) return
-
-            handleMonitoredAppEntry(pkg, comingFromOurPkg)
-
+            return
         }
-        // Если pkg == currentForeground — тот же пакет resumed повторно,
-        // это навигация внутри приложения, не новый вход.
+
+        // ── pkg — отслеживаемый пакет ──
+        handleMonitoredAppForeground(pkg, comingFromOurPkg, prevForeground)
     }
 
-    /**
-     * Отслеживаемый пакет [pkg] стал foreground.
-     * [comingFromOurPkg] = true если предыдущий foreground был наш пакет (PauseActivity).
-     */
-    private fun handleMonitoredAppEntry(pkg: String, comingFromOurPkg: Boolean) {
-        // Перечитываем confirmation на случай если PauseActivity только что записала
+    private fun handleMonitoredAppForeground(
+        pkg: String,
+        comingFromOurPkg: Boolean,
+        prevForeground: String?
+    ) {
         consumePauseConfirmation()
 
         val state = appStates.getOrDefault(pkg, AppState.IDLE)
+        val leftBefore = hasLeftForeground.getOrDefault(pkg, true)
 
         when (state) {
             AppState.ACCESS_GRANTED -> {
-                // Доступ уже выдан (подтверждение было consumed).
-                // Если мы пришли от нашего пакета — это PauseActivity → target, нормально.
-                // Если пришли от другого пакета — значит пользователь ушёл и вернулся.
-                // Но "ушёл" должен был сбросить state в IDLE (в цикле выше).
-                // Если мы всё равно тут с ACCESS_GRANTED — значит это первый переход
-                // PauseActivity → target. Пропускаем.
-                Log.d(TAG, "[$pkg] ACCESS_GRANTED, comingFromOur=$comingFromOurPkg → skip pause")
-                return
+                if (comingFromOurPkg) {
+                    Log.d(TAG, "[$pkg] ACCESS_GRANTED, from PauseActivity → allow")
+                    return
+                }
+                if (!leftBefore) {
+                    Log.d(TAG, "[$pkg] ACCESS_GRANTED, same session → allow")
+                    return
+                }
+                Log.d(TAG, "[$pkg] ACCESS_GRANTED but user had left → IDLE, new entry")
+                appStates[pkg] = AppState.IDLE
+                hasLeftForeground[pkg] = false
+                handleNewEntry(pkg)
             }
 
             AppState.PAUSE_SHOWING -> {
-                // Пауза была показана для этого пакета.
                 if (comingFromOurPkg) {
-                    // PauseActivity → target: возможно confirm, возможно back.
-                    // Проверяем confirmation ещё раз.
                     consumePauseConfirmation()
                     val updated = appStates.getOrDefault(pkg, AppState.IDLE)
                     if (updated == AppState.ACCESS_GRANTED) {
                         Log.d(TAG, "[$pkg] Confirmed via PauseActivity → access granted")
+                        hasLeftForeground[pkg] = false
                         return
                     }
-                    // Не подтверждено, но пришли от нашего пакета.
-                    // Это может быть: PauseActivity закрылась (back/home через наш пакет),
-                    // а target стал foreground. Или PauseActivity.finish() без confirm
-                    // и Android вернул target.
-                    // В любом случае — пауза не была подтверждена. Сброс. Новая пауза.
-                    Log.d(TAG, "[$pkg] PAUSE_SHOWING, from our pkg but NO confirm → reset, new pause")
+                    Log.d(TAG, "[$pkg] PAUSE_SHOWING, from PauseActivity but NO confirm → reset")
                     appStates[pkg] = AppState.IDLE
-                    handleNewEntry(pkg)
-                    return
-                } else {
-                    // Пришли от другого стороннего пакета. Значит пользователь ушёл
-                    // (свернул, переключился) и вернулся. Сброс. Новая пауза.
-                    Log.d(TAG, "[$pkg] PAUSE_SHOWING, from foreign pkg → reset, new pause")
-                    appStates[pkg] = AppState.IDLE
+                    hasLeftForeground[pkg] = false
                     handleNewEntry(pkg)
                     return
                 }
+                Log.d(TAG, "[$pkg] PAUSE_SHOWING, from ${prevForeground ?: "null"} → reset, new pause")
+                appStates[pkg] = AppState.IDLE
+                hasLeftForeground[pkg] = false
+                handleNewEntry(pkg)
             }
 
             AppState.IDLE -> {
-                // Стандартный новый вход.
+                if (!leftBefore && prevForeground == pkg) {
+                    Log.d(TAG, "[$pkg] IDLE, same foreground without leave → skip")
+                    return
+                }
+                hasLeftForeground[pkg] = false
                 handleNewEntry(pkg)
             }
         }
     }
 
-    /**
-     * Новый вход в отслеживаемое приложение из IDLE.
-     * Проверяем cooldown → показываем паузу или даём доступ.
-     */
     private fun handleNewEntry(pkg: String) {
         if (!isPackageInstalled(pkg)) {
             Log.d(TAG, "[$pkg] Not installed — removing from monitored")
@@ -363,7 +329,6 @@ class AppMonitorService : Service() {
             return
         }
 
-        // Проверяем cooldown
         val cooldownEnabled = prefs.getBoolean(KEY_COOLDOWN_ENABLED, true)
         if (cooldownEnabled) {
             val cooldownMs = getCooldownMs()
@@ -377,7 +342,6 @@ class AppMonitorService : Service() {
             }
         }
 
-        // Показываем паузу
         Log.d(TAG, "[$pkg] >>> SHOWING PAUSE <<<")
         appStates[pkg] = AppState.PAUSE_SHOWING
         showPauseOverlay(pkg)
@@ -387,10 +351,6 @@ class AppMonitorService : Service() {
     //  PAUSE CONFIRMATION
     // ══════════════════════════════════════════════════════════
 
-    /**
-     * Читает и потребляет подтверждение от PauseActivity.
-     * PauseActivity пишет (commit) пакет + timestamp при нажатии "Открыть".
-     */
     private fun consumePauseConfirmation() {
         val confirmedPkg = prefs.getString(KEY_PAUSE_CONFIRMED_PACKAGE, null) ?: return
         val confirmedAt = prefs.getLong(KEY_PAUSE_CONFIRMED_AT, 0L)
@@ -420,6 +380,13 @@ class AppMonitorService : Service() {
     private fun resetAllStates() {
         for (key in appStates.keys.toList()) {
             appStates[key] = AppState.IDLE
+        }
+        val monitored = prefs.getStringSet(KEY_MONITORED, emptySet()) ?: emptySet()
+        for (pkg in monitored) {
+            hasLeftForeground[pkg] = true
+        }
+        for (key in hasLeftForeground.keys.toList()) {
+            hasLeftForeground[key] = true
         }
         currentForeground = null
     }
