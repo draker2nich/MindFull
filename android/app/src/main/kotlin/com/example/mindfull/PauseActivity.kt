@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.CountDownTimer
+import android.util.Log
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.TextView
@@ -15,12 +16,26 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 
+/**
+ * Экран паузы. Показывается поверх целевого приложения.
+ *
+ * Жизненный цикл:
+ * - onCreate: запускает таймер (60с) и дыхательную анимацию
+ * - Пользователь ждёт окончания таймера → появляется кнопка "Открыть [app]"
+ * - Нажатие кнопки → записывает confirmation в SharedPreferences → запускает target → finish()
+ * - Если пользователь ушёл без нажатия (onPause без didProceedToApp) →
+ *   ничего не записываем, сервис при следующем входе покажет паузу заново
+ *
+ * ВАЖНО: confirmation записывается СИНХРОННО (commit) чтобы сервис
+ * гарантированно прочитал его при следующем poll'е.
+ */
 class PauseActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_TARGET_PACKAGE = "target_package"
         const val EXTRA_APP_NAME = "app_name"
 
+        private const val TAG = "PauseActivity"
         private const val TIMER_DURATION_MS = 60_000L
         private const val TICK_INTERVAL_MS = 1_000L
 
@@ -30,6 +45,7 @@ class PauseActivity : AppCompatActivity() {
 
         private const val PREFS_NAME = "mindful_prefs"
         private const val KEY_COOLDOWN_PREFIX = "cooldown_"
+        private const val KEY_COOLDOWN_ENABLED = "cooldown_enabled"
     }
 
     private lateinit var tvTimer: TextView
@@ -43,14 +59,9 @@ class PauseActivity : AppCompatActivity() {
     private var appName: String = ""
     private var timer: CountDownTimer? = null
     private var breathAnimator: AnimatorSet? = null
-    private var remainingMs: Long = TIMER_DURATION_MS
     private var timerFinished = false
     private var didProceedToApp = false
-    private var noteSaved = false // Защита от двойного сохранения
-
-    // configChanges="orientation|screenSize|keyboardHidden" в манифесте
-    // значит onCreate вызывается 1 раз, rotation обрабатывается без пересоздания.
-    // savedInstanceState не нужен — таймер продолжает работать.
+    private var noteSaved = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,6 +69,8 @@ class PauseActivity : AppCompatActivity() {
 
         targetPackage = intent.getStringExtra(EXTRA_TARGET_PACKAGE) ?: ""
         appName = intent.getStringExtra(EXTRA_APP_NAME) ?: "приложение"
+
+        Log.d(TAG, "onCreate for: $targetPackage ($appName)")
 
         tvTimer = findViewById(R.id.tvTimer)
         tvBreathHint = findViewById(R.id.tvBreathHint)
@@ -76,30 +89,61 @@ class PauseActivity : AppCompatActivity() {
         startBreathAnimation()
 
         btnProceed.setOnClickListener {
-            didProceedToApp = true
-            saveNoteOnce()
-            setCooldownForPackage(targetPackage)
-            launchTargetApp()
-            finish()
+            onProceedClicked()
         }
+    }
+
+    private fun onProceedClicked() {
+        if (didProceedToApp) return // Защита от двойного нажатия
+        didProceedToApp = true
+
+        Log.d(TAG, "User clicked Proceed for: $targetPackage")
+
+        saveNoteOnce()
+
+        // 1. Записываем confirmation СИНХРОННО (commit, не apply)
+        //    чтобы сервис гарантированно увидел при следующем poll
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+
+        editor.putString(AppMonitorService.KEY_PAUSE_CONFIRMED_PACKAGE, targetPackage)
+        editor.putLong(AppMonitorService.KEY_PAUSE_CONFIRMED_AT, System.currentTimeMillis())
+
+        // 2. Если cooldown включён — записываем cooldown timestamp
+        val cooldownEnabled = prefs.getBoolean(KEY_COOLDOWN_ENABLED, true)
+        if (cooldownEnabled) {
+            editor.putLong(KEY_COOLDOWN_PREFIX + targetPackage, System.currentTimeMillis())
+            Log.d(TAG, "Cooldown timestamp set for $targetPackage")
+        }
+
+        editor.commit() // СИНХРОННО!
+
+        // 3. Запускаем целевое приложение
+        launchTargetApp()
+
+        // 4. Закрываем PauseActivity
+        finish()
     }
 
     override fun onPause() {
         super.onPause()
-        // Если свернул без нажатия "Открыть" — сохраняем заметку, но НЕ cooldown
         if (!didProceedToApp) {
+            // Пользователь ушёл без подтверждения — сохраняем заметку если есть
             saveNoteOnce()
+            Log.d(TAG, "onPause without proceed — pause will reset")
         }
     }
 
     override fun onDestroy() {
         timer?.cancel()
         breathAnimator?.cancel()
+        Log.d(TAG, "onDestroy")
         super.onDestroy()
     }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        // Не даём уйти по Back пока таймер не закончен
         if (!timerFinished) return
         saveNoteOnce()
         finish()
@@ -111,12 +155,10 @@ class PauseActivity : AppCompatActivity() {
         timer?.cancel()
         timer = object : CountDownTimer(durationMs, TICK_INTERVAL_MS) {
             override fun onTick(millisLeft: Long) {
-                remainingMs = millisLeft
                 tvTimer.text = (millisLeft / 1000).toInt().toString()
             }
 
             override fun onFinish() {
-                remainingMs = 0
                 timerFinished = true
                 tvTimer.text = "0"
                 activateButton()
@@ -125,7 +167,6 @@ class PauseActivity : AppCompatActivity() {
     }
 
     private fun activateButton() {
-        timerFinished = true
         btnProceed.isEnabled = true
         btnProceed.text = "Открыть $appName"
         btnProceed.animate()
@@ -205,7 +246,7 @@ class PauseActivity : AppCompatActivity() {
         }
     }
 
-    // ── Заметка (с защитой от двойного сохранения) ──
+    // ── Заметка ──
 
     private fun saveNoteOnce() {
         if (noteSaved) return
@@ -224,19 +265,12 @@ class PauseActivity : AppCompatActivity() {
             db.insert(NoteDbHelper.TABLE_NAME, null, values)
             db.close()
         } catch (e: Exception) {
-            noteSaved = false // Позволяем повторную попытку при ошибке
-            android.util.Log.e("PauseActivity", "Failed to save note", e)
+            noteSaved = false
+            Log.e(TAG, "Failed to save note", e)
         }
     }
 
-    // ── Cooldown ──
-
-    private fun setCooldownForPackage(pkg: String) {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putLong(KEY_COOLDOWN_PREFIX + pkg, System.currentTimeMillis()).apply()
-    }
-
-    // ── Переход в целевое приложение ──
+    // ── Запуск целевого приложения ──
 
     private fun launchTargetApp() {
         if (targetPackage.isEmpty()) return
@@ -247,7 +281,7 @@ class PauseActivity : AppCompatActivity() {
                 startActivity(launchIntent)
             }
         } catch (e: Exception) {
-            android.util.Log.e("PauseActivity", "Failed to launch $targetPackage", e)
+            Log.e(TAG, "Failed to launch $targetPackage", e)
         }
     }
 }

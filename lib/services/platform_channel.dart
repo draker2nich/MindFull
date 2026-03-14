@@ -119,6 +119,20 @@ class PlatformChannel {
     }
   }
 
+  static Future<void> setCooldownEnabled(bool enabled) async {
+    await _serviceChannel.invokeMethod('setCooldownEnabled', {
+      'enabled': enabled,
+    });
+  }
+
+  static Future<bool> isCooldownEnabled() async {
+    try {
+      return await _serviceChannel.invokeMethod<bool>('isCooldownEnabled') ?? true;
+    } on PlatformException {
+      return true;
+    }
+  }
+
   // ── Установленные приложения ──
 
   static Future<List<AppInfo>> getInstalledApps() async {

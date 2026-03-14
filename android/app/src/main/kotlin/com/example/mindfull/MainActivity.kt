@@ -95,7 +95,6 @@ class MainActivity : FlutterActivity() {
                     val intent = Intent(this, AppMonitorService::class.java)
                     intent.action = AppMonitorService.ACTION_START
                     startForegroundService(intent)
-                    // Запоминаем что пользователь включил сервис (для BootReceiver)
                     getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                         .edit()
                         .putBoolean(KEY_SERVICE_ENABLED, true)
@@ -140,6 +139,23 @@ class MainActivity : FlutterActivity() {
                     val minutes = getSharedPreferences("mindful_prefs", Context.MODE_PRIVATE)
                         .getInt("cooldown_minutes", 5)
                     result.success(minutes)
+                }
+                "setCooldownEnabled" -> {
+                    val enabled = call.argument<Boolean>("enabled")
+                    if (enabled != null) {
+                        getSharedPreferences("mindful_prefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .putBoolean("cooldown_enabled", enabled)
+                            .apply()
+                        result.success(null)
+                    } else {
+                        result.error("INVALID_ARGS", "enabled is null", null)
+                    }
+                }
+                "isCooldownEnabled" -> {
+                    val enabled = getSharedPreferences("mindful_prefs", Context.MODE_PRIVATE)
+                        .getBoolean("cooldown_enabled", true)
+                    result.success(enabled)
                 }
                 else -> result.notImplemented()
             }

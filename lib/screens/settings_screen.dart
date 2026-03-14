@@ -20,10 +20,11 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   bool _batteryExempt = false;
   int _monitoredCount = 0;
   int _cooldownMinutes = 5;
+  bool _cooldownEnabled = true;
   bool _loading = true;
 
-  static const _cooldownOptions = [1, 5, 15, 30, 60];
-  static const _privacyPolicyUrl = 'https://example.com/privacy'; // TODO: заменить на реальный URL
+  static const _cooldownOptions = [1, 3, 5, 10, 15, 30, 60];
+  static const _privacyPolicyUrl = 'https://example.com/privacy';
 
   @override
   void initState() {
@@ -49,6 +50,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     final prefs = await SharedPreferences.getInstance();
     final monitored = prefs.getStringList('monitored_packages') ?? [];
     final cooldown = await PlatformChannel.getCooldownMinutes();
+    final cooldownEnabled = await PlatformChannel.isCooldownEnabled();
     if (!mounted) return;
     setState(() {
       _serviceRunning = running;
@@ -57,6 +59,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       _batteryExempt = perms.battery;
       _monitoredCount = monitored.length;
       _cooldownMinutes = cooldown;
+      _cooldownEnabled = cooldownEnabled;
       _loading = false;
     });
   }
@@ -84,6 +87,11 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
   Future<void> _setCooldown(int minutes) async {
     await PlatformChannel.setCooldownMinutes(minutes);
     setState(() => _cooldownMinutes = minutes);
+  }
+
+  Future<void> _toggleCooldownEnabled(bool enabled) async {
+    await PlatformChannel.setCooldownEnabled(enabled);
+    setState(() => _cooldownEnabled = enabled);
   }
 
   Future<void> _deleteAllData() async {
@@ -115,20 +123,13 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     );
 
     if (confirm == true) {
-      // Останавливаем сервис
       await PlatformChannel.stopMonitorService();
-
-      // Очищаем заметки
       await NotesRepository.clearAll();
 
-      // Очищаем SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('monitored_packages');
-      // Сбрасываем cooldown на дефолт через native
       await PlatformChannel.setCooldownMinutes(5);
-      // Не сбрасываем onboarding_done чтобы не показывать онбординг заново
-
-      // Обновляем мониторинг (пустой список)
+      await PlatformChannel.setCooldownEnabled(true);
       await PlatformChannel.updateMonitoredApps([]);
 
       if (!mounted) return;
@@ -220,13 +221,32 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
 
                 // ── Пауза ──
                 _section(cs, 'Пауза'),
-                ListTile(
-                  leading: Icon(Icons.timer_rounded, color: cs.primary),
+
+                // Вкл/Выкл cooldown
+                SwitchListTile(
                   title: const Text('Cooldown между паузами'),
-                  subtitle: Text(_cooldownLabel(_cooldownMinutes)),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => _showCooldownPicker(cs),
+                  subtitle: Text(
+                    _cooldownEnabled
+                        ? 'После подтверждения — перерыв ${_cooldownLabel(_cooldownMinutes)}'
+                        : 'Пауза при каждом входе в приложение',
+                  ),
+                  secondary: Icon(
+                    Icons.snooze_rounded,
+                    color: _cooldownEnabled ? cs.primary : cs.onSurfaceVariant,
+                  ),
+                  value: _cooldownEnabled,
+                  onChanged: (val) => _toggleCooldownEnabled(val),
                 ),
+
+                // Выбор времени cooldown (доступен только при включённом cooldown)
+                if (_cooldownEnabled)
+                  ListTile(
+                    leading: Icon(Icons.timer_rounded, color: cs.primary),
+                    title: const Text('Время cooldown'),
+                    subtitle: Text(_cooldownLabel(_cooldownMinutes)),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => _showCooldownPicker(cs),
+                  ),
 
                 const Divider(height: 32),
 
@@ -314,8 +334,8 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
             Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
-                'Повторная пауза не сработает в течение выбранного времени '
-                'после последней паузы для того же приложения.',
+                'После подтверждения паузы повторная пауза не сработает '
+                'в течение выбранного времени для того же приложения.',
                 style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
               ),
             ),
